@@ -1,0 +1,15 @@
+{
+  "name": "tester-automation",
+  "version": "1.0.0",
+  "description": "Play Store closed-test tester automation foundation",
+  "private": true,
+  "scripts": {
+    "clasp:login": "clasp login",
+    "clasp:push": "clasp push",
+    "clasp:pull": "clasp pull",
+    "clasp:open": "clasp open"
+  },
+  "devDependencies": {
+    "@google/clasp": "^3.4.0"
+  }
+}

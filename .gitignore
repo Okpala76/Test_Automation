@@ -1,0 +1,15 @@
+# Node dependencies
+node_modules/
+
+# clasp OAuth credentials and local secrets
+.clasprc.json
+*.clasprc.json
+.env
+.env.*
+!.env.example
+credentials.json
+token.json
+
+# Local operating-system files
+.DS_Store
+Thumbs.db
