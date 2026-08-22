@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <style>
+      :root {
+        color-scheme: light;
+        --ink: #19231d;
+        --muted: #5c6a61;
+        --paper: #fffdf7;
+        --green: #1f6b45;
+        --green-dark: #154d32;
+        --line: #dce5dd;
+        --soft: #edf5ef;
+        --error: #9d2d27;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background: #e7efe8;
+        color: var(--ink);
+        font-family: Arial, Helvetica, sans-serif;
+        line-height: 1.5;
+      }
+
+      main {
+        width: min(100%, 680px);
+        margin: 0 auto;
+        padding: 24px 16px 48px;
+      }
+
+      .brand {
+        margin-bottom: 18px;
+        color: var(--green-dark);
+        font-size: 14px;
+        font-weight: 700;
+        letter-spacing: .08em;
+        text-transform: uppercase;
+      }
+
+      .card {
+        overflow: hidden;
+        border: 1px solid rgba(21, 77, 50, .15);
+        border-radius: 18px;
+        background: var(--paper);
+        box-shadow: 0 16px 45px rgba(25, 35, 29, .10);
+      }
+
+      .header { padding: 26px 24px 20px; background: var(--soft); }
+      .content { padding: 24px; }
+      h1 { margin: 0 0 8px; font-size: clamp(25px, 7vw, 34px); line-height: 1.15; }
+      h2 { margin: 0 0 8px; font-size: 20px; }
+      p { margin: 0 0 14px; }
+      .muted { color: var(--muted); }
+      .task { margin: 18px 0 24px; padding: 18px; border-left: 4px solid var(--green); background: #fff; }
+      .task-title { margin-bottom: 8px; font-size: 18px; font-weight: 700; }
+      fieldset { margin: 0 0 24px; padding: 0; border: 0; }
+      legend { margin-bottom: 10px; font-weight: 700; }
+      .options { display: flex; flex-wrap: wrap; gap: 10px; }
+      .option { position: relative; }
+      .option input { position: absolute; opacity: 0; pointer-events: none; }
+      .option span {
+        display: inline-flex;
+        min-width: 54px;
+        min-height: 44px;
+        align-items: center;
+        justify-content: center;
+        padding: 9px 14px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        background: #fff;
+        cursor: pointer;
+        font-weight: 700;
+      }
+      .option input:checked + span { border-color: var(--green); background: var(--green); color: #fff; }
+      .option input:focus-visible + span { outline: 3px solid rgba(31, 107, 69, .25); }
+      textarea {
+        width: 100%;
+        min-height: 130px;
+        resize: vertical;
+        padding: 12px;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: #fff;
+        color: var(--ink);
+        font: inherit;
+      }
+      textarea:focus { outline: 3px solid rgba(31, 107, 69, .18); border-color: var(--green); }
+      button {
+        width: 100%;
+        min-height: 50px;
+        border: 0;
+        border-radius: 11px;
+        background: var(--green);
+        color: #fff;
+        cursor: pointer;
+        font: inherit;
+        font-weight: 700;
+      }
+      button:hover { background: var(--green-dark); }
+      button:disabled { cursor: wait; opacity: .65; }
+      .status { min-height: 24px; margin-top: 12px; color: var(--muted); text-align: center; }
+      .status.error { color: var(--error); }
+      .state { padding: 34px 24px; text-align: center; }
+      .state-mark { margin-bottom: 14px; font-size: 42px; }
+      [hidden] { display: none !important; }
+
+      @media (min-width: 560px) {
+        main { padding-top: 48px; }
+        .header, .content { padding-right: 34px; padding-left: 34px; }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="brand">Lodge Manager Beta Test</div>
+      <section class="card">
+        <? if (state === 'form') { ?>
+          <header class="header">
+            <h1>Hi <?= testerName ?>!</h1>
+            <p class="muted">Day <?= day ?> - <?= periodLabel ?> Activity</p>
+          </header>
+          <div class="content" id="form-view">
+            <div class="task">
+              <div class="task-title"><?= taskTitle ?></div>
+              <p><?= taskInstructions ?></p>
+            </div>
+
+            <form id="feedback-form">
+              <input type="hidden" id="tester-token" value="<?= testerToken ?>">
+              <input type="hidden" id="activity-id" value="<?= activityId ?>">
+
+              <fieldset>
+                <legend>Did you complete this activity?</legend>
+                <div class="options">
+                  <label class="option"><input type="radio" name="completed" value="true" required><span>Yes</span></label>
+                  <label class="option"><input type="radio" name="completed" value="false"><span>No</span></label>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>How was the experience?</legend>
+                <div class="options" aria-label="Rating from 1 to 5">
+                  <? for (var rating = 1; rating <= 5; rating += 1) { ?>
+                    <label class="option"><input type="radio" name="rating" value="<?= rating ?>" required><span><?= rating ?></span></label>
+                  <? } ?>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>Did you encounter a bug?</legend>
+                <div class="options">
+                  <label class="option"><input type="radio" name="bugReported" value="false" required><span>No</span></label>
+                  <label class="option"><input type="radio" name="bugReported" value="true"><span>Yes</span></label>
+                </div>
+              </fieldset>
+
+              <fieldset>
+                <legend>Feedback / anything confusing</legend>
+                <textarea id="comment" maxlength="2000" placeholder="Optional" aria-label="Feedback or anything confusing"></textarea>
+              </fieldset>
+
+              <button id="submit-button" type="submit">Submit Feedback</button>
+              <div class="status" id="status" role="status" aria-live="polite"></div>
+            </form>
+          </div>
+
+          <div class="state" id="success-view" hidden>
+            <div class="state-mark">&#10003;</div>
+            <h2>Thank you!</h2>
+            <p id="success-message">Your feedback for Day <?= day ?> has been recorded.</p>
+            <p class="muted">You may close this page.</p>
+          </div>
+        <? } else { ?>
+          <div class="state">
+            <div class="state-mark"><?= state === 'already_submitted' ? 'Done' : '!' ?></div>
+            <h1><?= state === 'already_submitted' ? 'Thank you!' : 'Link unavailable' ?></h1>
+            <p><?= message ?></p>
+          </div>
+        <? } ?>
+      </section>
+    </main>
+
+    <? if (state === 'form') { ?>
+      <script>
+        const form = document.getElementById('feedback-form');
+        const button = document.getElementById('submit-button');
+        const status = document.getElementById('status');
+
+        form.addEventListener('submit', function (event) {
+          event.preventDefault();
+          if (!form.reportValidity()) return;
+
+          button.disabled = true;
+          status.className = 'status';
+          status.textContent = 'Submitting...';
+
+          const payload = {
+            testerToken: document.getElementById('tester-token').value,
+            activityId: document.getElementById('activity-id').value,
+            completed: form.elements.completed.value === 'true',
+            rating: Number(form.elements.rating.value),
+            bugReported: form.elements.bugReported.value === 'true',
+            comment: document.getElementById('comment').value
+          };
+
+          google.script.run
+            .withSuccessHandler(function (result) {
+              document.getElementById('form-view').hidden = true;
+              document.getElementById('success-view').hidden = false;
+              const message = result.alreadySubmitted
+                ? 'Feedback was already submitted. Thank you for helping test Lodge Manager.'
+                : 'Your feedback for Day ' + result.day + ' has been recorded.';
+              document.getElementById('success-message').textContent =
+                result.activityCompleted && !result.alreadySubmitted
+                  ? message + ' Activity completed successfully.'
+                  : message;
+            })
+            .withFailureHandler(function () {
+              button.disabled = false;
+              status.className = 'status error';
+              status.textContent = 'We could not submit your feedback. Please try again.';
+            })
+            .submitFeedback(payload);
+        });
+      </script>
+    <? } ?>
+  </body>
+</html>

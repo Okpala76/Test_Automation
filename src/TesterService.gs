@@ -168,6 +168,12 @@ function getActiveTesters() {
   });
 }
 
+function getReminderEligibleTesters() {
+  return getAllTesters().filter(function (tester) {
+    return REMINDER_ELIGIBLE_STATUSES.indexOf(tester.status) !== -1;
+  });
+}
+
 function activateTester(testerId, startDate) {
   var activationDate =
     startDate === null || typeof startDate === 'undefined' || startDate === ''

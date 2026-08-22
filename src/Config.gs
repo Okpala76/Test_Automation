@@ -23,7 +23,9 @@ var REQUIRED_SHEET_HEADERS = {
     'Task ID',
     'Assigned At',
     'Completed At',
-    'Status'
+    'Status',
+    'Last Reminder At',
+    'Reminder Count'
   ],
   'Feedback': [
     'Feedback ID',
@@ -35,7 +37,19 @@ var REQUIRED_SHEET_HEADERS = {
     'Comment',
     'Submitted At'
   ],
-  'Dashboard': []
+  'Dashboard': [],
+  'Monitoring': [
+    'Tester ID',
+    'Name',
+    'Email',
+    'Current Day',
+    'Status',
+    'Completed Activities',
+    'Feedback Count',
+    'Last Participation At',
+    'Days Since Participation',
+    'Updated At'
+  ]
 };
 
 var TESTER_SHEET_NAME = 'Testers';
@@ -71,6 +85,26 @@ var ACTIVITY_STATUSES = {
   COMPLETED: 'Completed',
   SKIPPED: 'Skipped'
 };
+
+var EMAIL_TEST_MODE_PROPERTY = 'EMAIL_TEST_MODE';
+var TEST_EMAIL_RECIPIENT_PROPERTY = 'TEST_EMAIL_RECIPIENT';
+var FEEDBACK_WEB_APP_URL_PROPERTY = 'FEEDBACK_WEB_APP_URL';
+var FEEDBACK_SHEET_NAME = 'Feedback';
+var FEEDBACK_COMMENT_MAX_LENGTH = 2000;
+
+var REMINDER_TRIGGER_HANDLERS = {
+  MORNING: 'sendMorningReminders',
+  EVENING: 'sendEveningReminders'
+};
+
+var REMINDER_ELIGIBLE_STATUSES = [
+  TESTER_STATUSES.ACTIVE,
+  TESTER_STATUSES.NEEDS_REMINDER,
+  TESTER_STATUSES.AT_RISK
+];
+
+var MONITORING_SHEET_NAME = 'Monitoring';
+var MONITORING_TRIGGER_HANDLER = 'runMonitoringRefresh';
 
 var DEFAULT_TASKS = [
   {

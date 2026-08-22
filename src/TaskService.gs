@@ -256,8 +256,10 @@ function resolveActiveTester_(testerOrTesterId) {
   if (!tester) {
     throw new Error('Tester not found for the provided tester ID.');
   }
-  if (tester.status !== TESTER_STATUSES.ACTIVE) {
-    throw new Error('Tester must have Active status to receive testing tasks.');
+  if (REMINDER_ELIGIBLE_STATUSES.indexOf(tester.status) === -1) {
+    throw new Error(
+      'Tester must have Active, Needs Reminder, or At Risk status to receive testing tasks.'
+    );
   }
   if (!normalizeTesterStartDate_(tester.startDate)) {
     throw new Error('Active tester must have a Start Date.');

@@ -108,27 +108,31 @@ function completeActivity(activityId) {
   lock.waitLock(30000);
 
   try {
-    var match = findActivityRowById_(normalizedId);
-    if (!match) {
-      throw new Error('Activity not found for the provided Activity ID.');
-    }
-
-    var activity = activityObjectFromRow_(match.row, match.columnIndexes);
-    if (activity.status === ACTIVITY_STATUSES.COMPLETED) {
-      return activity;
-    }
-
-    match.sheet
-      .getRange(match.rowNumber, match.columnIndexes['Status'])
-      .setValue(ACTIVITY_STATUSES.COMPLETED);
-    match.sheet
-      .getRange(match.rowNumber, match.columnIndexes['Completed At'])
-      .setValue(new Date());
-
-    return getActivityById(normalizedId);
+    return completeActivityWithoutLock_(normalizedId);
   } finally {
     lock.releaseLock();
   }
+}
+
+function completeActivityWithoutLock_(activityId) {
+  var match = findActivityRowById_(activityId);
+  if (!match) {
+    throw new Error('Activity not found for the provided Activity ID.');
+  }
+
+  var activity = activityObjectFromRow_(match.row, match.columnIndexes);
+  if (activity.status === ACTIVITY_STATUSES.COMPLETED) {
+    return activity;
+  }
+
+  match.sheet
+    .getRange(match.rowNumber, match.columnIndexes['Status'])
+    .setValue(ACTIVITY_STATUSES.COMPLETED);
+  match.sheet
+    .getRange(match.rowNumber, match.columnIndexes['Completed At'])
+    .setValue(new Date());
+
+  return getActivityById(activityId);
 }
 
 function runTaskEngineSmokeTest() {
@@ -233,7 +237,9 @@ function assignTaskToTesterWithResult_(testerId, taskId) {
       'Task ID': normalizedTaskId,
       'Assigned At': new Date(),
       'Completed At': '',
-      'Status': ACTIVITY_STATUSES.ASSIGNED
+      'Status': ACTIVITY_STATUSES.ASSIGNED,
+      'Last Reminder At': '',
+      'Reminder Count': 0
     });
 
     context.sheet
@@ -249,7 +255,32 @@ function assignTaskToTesterWithResult_(testerId, taskId) {
   }
 }
 
+function ensureActivityLogReminderColumns_() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ACTIVITY_LOG_SHEET_NAME);
+  if (!sheet) {
+    return;
+  }
+  var required = REQUIRED_SHEET_HEADERS[ACTIVITY_LOG_SHEET_NAME];
+  var lastCol = sheet.getLastColumn();
+  if (lastCol === 0) {
+    return;
+  }
+  var currentHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (value) {
+    return String(value).trim();
+  });
+  var missing = [];
+  required.forEach(function (header) {
+    if (currentHeaders.indexOf(header) === -1) {
+      missing.push(header);
+    }
+  });
+  if (missing.length > 0) {
+    sheet.getRange(1, lastCol + 1, 1, missing.length).setValues([missing]);
+  }
+}
+
 function getActivityLogSheetContext_() {
+  ensureActivityLogReminderColumns_();
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ACTIVITY_LOG_SHEET_NAME);
   var headers = REQUIRED_SHEET_HEADERS[ACTIVITY_LOG_SHEET_NAME];
 
@@ -257,14 +288,27 @@ function getActivityLogSheetContext_() {
     throw new Error('The Activity Log sheet is missing. Run initializeSpreadsheet() first.');
   }
 
-  var sheetHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  headers.forEach(function (header, index) {
-    if (sheetHeaders[index] !== header) {
-      throw new Error(
-        'The Activity Log headers are invalid. Run initializeSpreadsheet() on an empty sheet or restore the required headers.'
-      );
-    }
-  });
+  var lastCol = sheet.getLastColumn();
+  if (lastCol < headers.length) {
+    // After migration, headers should be present; if still short, treat as invalid.
+    var sheetHeaders = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
+    headers.forEach(function (header, index) {
+      if (String(sheetHeaders[index] || '').trim() !== header) {
+        throw new Error(
+          'The Activity Log headers are invalid. Run initializeSpreadsheet() on an empty sheet or restore the required headers.'
+        );
+      }
+    });
+  } else {
+    var sheetHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
+    headers.forEach(function (header, index) {
+      if (sheetHeaders[index] !== header) {
+        throw new Error(
+          'The Activity Log headers are invalid. Run initializeSpreadsheet() on an empty sheet or restore the required headers.'
+        );
+      }
+    });
+  }
 
   var columnIndexes = {};
   headers.forEach(function (header, index) {
@@ -336,8 +380,45 @@ function activityObjectFromRow_(row, columnIndexes) {
     taskId: normalizeActivityLookupValue_(row[columnIndexes['Task ID'] - 1]),
     assignedAt: row[columnIndexes['Assigned At'] - 1],
     completedAt: row[columnIndexes['Completed At'] - 1],
-    status: row[columnIndexes['Status'] - 1]
+    status: row[columnIndexes['Status'] - 1],
+    lastReminderAt: row[columnIndexes['Last Reminder At'] - 1],
+    reminderCount: normalizeReminderCount_(row[columnIndexes['Reminder Count'] - 1])
   };
+}
+
+function normalizeReminderCount_(value) {
+  if (value === null || typeof value === 'undefined' || String(value).trim() === '') {
+    return 0;
+  }
+  var parsed = Number(value);
+  return isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 0;
+}
+
+function recordReminderSent_(activityId) {
+  var match = findActivityRowById_(activityId);
+  if (!match) {
+    throw new Error('Activity not found for the provided Activity ID.');
+  }
+  var now = new Date();
+  var currentCount = normalizeReminderCount_(match.row[match.columnIndexes['Reminder Count'] - 1]);
+  match.sheet.getRange(match.rowNumber, match.columnIndexes['Last Reminder At']).setValue(now);
+  match.sheet.getRange(match.rowNumber, match.columnIndexes['Reminder Count']).setValue(currentCount + 1);
+  return getActivityById(activityId);
+}
+
+function isAlreadyRemindedToday_(activity) {
+  var last = activity.lastReminderAt;
+  if (!last) {
+    return false;
+  }
+  var lastDate = last instanceof Date ? last : new Date(last);
+  if (!(lastDate instanceof Date) || isNaN(lastDate.getTime())) {
+    return false;
+  }
+  var tz = Session.getScriptTimeZone();
+  var todayStr = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
+  var lastStr = Utilities.formatDate(lastDate, tz, 'yyyy-MM-dd');
+  return todayStr === lastStr;
 }
 
 function generateUniqueActivityId_() {

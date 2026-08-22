@@ -1,6 +1,6 @@
 # Tester Automation
 
-Iterations 1 through 3 establish the local Google Apps Script foundation, tester management, and a manual 14-day task engine for a Play Store closed-test tester automation system. The project is container-bound to its target Google Spreadsheet, which is its datastore. No scheduling, reminders, emails, feedback forms, web handlers, or dashboard calculations are included.
+Iterations 1 through 6 establish the local Google Apps Script foundation, tester management, a 14-day task engine, automated email reminders, a tester-facing feedback Web App, and smart participation monitoring. The project remains container-bound to its target Google Spreadsheet. Final dashboard charts and escalation messaging are not included yet.
 
 ## Prerequisites
 
@@ -53,6 +53,7 @@ The expected sheets are:
 - `Activity Log`
 - `Feedback`
 - `Dashboard`
+- `Monitoring`
 
 Run `healthCheck()` afterward. It returns and logs a structured result with `ok`, `spreadsheetName`, `requiredSheets`, and `missingSheets`. Before initialization, it reports exactly which of the five sheets are missing.
 
@@ -163,7 +164,7 @@ Run `seedDefaultTasks()` once to add missing default Day/Period tasks. It is ide
 
 ### Assignments And Activities
 
-The `Activity Log` records each assignment with an Activity ID, Tester ID, Task ID, Assigned At, Completed At, and Status. Supported activity statuses are:
+The `Activity Log` records each assignment with an Activity ID, Tester ID, Task ID, Assigned At, Completed At, Status, Last Reminder At, and Reminder Count. Iteration 4 added `Last Reminder At` and `Reminder Count` to track reminder delivery without destroying existing data — existing sheets are migrated idempotently by appending the two new columns. Supported activity statuses are:
 
 - `Assigned`
 - `Completed`
@@ -197,14 +198,289 @@ After reloading the spreadsheet, the **Tester Automation** menu includes:
 - Seed Default Tasks
 - Assign Today's Tasks for Active Testers
 - Run Task Engine Smoke Test
+- Email Automation → Run Morning Reminders, Run Evening Reminders, Install Reminder Triggers, Remove Reminder Triggers, Run Email Automation Smoke Test
+- Feedback → Configure Web App URL, Check Web App Configuration, Run Feedback Smoke Test, Show Deployment Instructions
+- Monitoring → Refresh Monitoring, Refresh Tester Statuses, Install Monitoring Trigger, Remove Monitoring Trigger, Run Monitoring Smoke Test
 
-The assignment menu item processes all Active testers manually. It does not create a time-driven trigger.
+Every menu action uses a spreadsheet toast for normal results and an alert for important errors. Return values and execution logs remain available for debugging, but are not required for normal operation.
 
 ### Task Engine Smoke Test
 
 Run `Run Task Engine Smoke Test` from the spreadsheet menu, or execute `runTaskEngineSmokeTest()` in the Apps Script editor. It seeds missing default tasks, checks a repeat seed does not create duplicates, creates and activates a uniquely named `[Smoke Test] Task Engine Tester`, assigns Day 1 tasks, prevents a duplicate assignment, and marks one smoke-test activity completed.
 
 The smoke-test tester and activity rows remain for review. It never deletes or changes existing real tester rows. Manually remove only rows clearly identified as `[Smoke Test]` if they are no longer needed.
+
+## Email Reminder Automation
+
+Iteration 4 automatically reminds eligible testers about their current Day 1–14 AM and PM tasks using `MailApp` and the bound spreadsheet as the source of truth. It reuses the existing current-day calculation and never sends reminders before a tester’s Start Date or after Day 14.
+
+### Activity Log Reminder Tracking
+
+The two new columns prevent repeated emails when a function is run twice or a trigger retries. `Last Reminder At` records when the last reminder was sent for that Tester/Task pair, and `Reminder Count` increments each time. `initializeSpreadsheet()` and `ensureActivityLogReminderColumns_()` append these headers idempotently without reordering existing data.
+
+### Test Mode
+
+Email delivery must never accidentally reach real testers during testing. Test mode redirects all reminder emails to a single developer address.
+
+Configure it once in the bound Apps Script editor:
+
+```javascript
+setEmailTestMode(true);
+setTestEmailRecipient('you@example.com');
+```
+
+Check the current configuration with:
+
+```javascript
+getEmailTestMode();
+getTestEmailRecipient();
+```
+
+When test mode is enabled, every call to `sendTaskReminderEmail`, `sendMorningReminders`, and `sendEveningReminders` sends to the test recipient instead of the tester’s real email. Disable test mode for real runs with `setEmailTestMode(false)`. No personal email is hardcoded.
+
+### Morning Reminders
+
+`sendMorningReminders()` iterates over all reminder-eligible testers, determines each tester’s current day, assigns today’s AM task if needed, and skips testers that are out of range, already completed, or already reminded today. A successful send records `Last Reminder At` and increments `Reminder Count`.
+
+Use the safe no-argument wrapper from the editor or menu:
+
+```javascript
+runMorningReminderTest(); // respects test mode
+```
+
+The underlying sender is:
+
+```javascript
+sendTaskReminderEmail(tester, task, activity);
+```
+
+The morning email includes tester name, day, AM designation, task title, instructions, and a personalized feedback link for the assigned activity. Evening emails include the equivalent PM feedback link. Test Mode still redirects the email to the configured test inbox while preserving the smoke tester's personalized link.
+
+Example subject: `Lodge Manager Test — Day 4 Morning Activity`
+
+### Evening Reminders
+
+`sendEveningReminders()` sends one consolidated email per Active tester for today’s PM task. It assigns the PM task if missing, skips testers whose PM task is already completed or already reminded today, and includes a note about the morning activity:
+
+- `Morning activity: Completed ✅` if the AM activity is completed
+- `Your morning activity is still outstanding.` otherwise
+
+Only one evening email is sent per tester per run.
+
+Use:
+
+```javascript
+runEveningReminderTest();
+```
+
+### Duplicate Protection and Eligibility
+
+- `Active`, `Needs Reminder`, and `At Risk` testers are eligible for their normal AM/PM task reminders.
+- `Not Started`, `Completed`, and `Inactive` testers are not eligible for normal reminders.
+- Tasks outside Day 1–14 are ignored.
+- Only active tasks are assigned and reminded.
+- Already completed activities are skipped (`reason: "already_completed"`).
+- Already reminded activities for the same calendar day (script timezone) are skipped (`reason: "already_reminded"`), so running a reminder twice or a trigger retry does not send duplicate period emails.
+- One failing tester/email does not stop batch processing; `sendMorningReminders()` and `sendEveningReminders()` return a summary like `{ processed, sent, skipped, failed, errors }` without exposing tokens.
+
+### Triggers
+
+Create daily time-driven triggers in the Apps Script project timezone:
+
+```javascript
+installReminderTriggers(); // creates ~9:00 AM and ~6:00 PM triggers
+removeReminderTriggers(); // removes only the two reminder triggers
+```
+
+Both functions are idempotent: running `installReminderTriggers()` repeatedly does not create duplicates, and `removeReminderTriggers()` touches only handlers named `sendMorningReminders` and `sendEveningReminders`. Inspect triggers manually at **Triggers** in the Apps Script editor. Do not assume exact-minute execution.
+
+Project timezone matters for both day calculation and trigger scheduling. Confirm it in **Project Settings → Time zone** (e.g., `Etc/UTC`).
+
+### Email Automation Smoke Test
+
+Run `Run Email Automation Smoke Test` from the menu, or execute `runEmailAutomationSmokeTest()` in the Apps Script editor with test mode enabled:
+
+```javascript
+setEmailTestMode(true);
+setTestEmailRecipient('you@example.com');
+runEmailAutomationSmokeTest();
+```
+
+The smoke test verifies: test mode is configured, default tasks can be seeded idempotently, a uniquely named `[Smoke Test] Email Automation Tester` is created and activated for today, morning and evening emails are generated and sent to the test recipient, duplicate reminder protection blocks a second send for the same period/day, completed tasks are skipped, reminder counts and timestamps update correctly, and no real tester receives a smoke-test email (all sends are redirected while test mode is on).
+
+Smoke-test rows persist for manual review; only remove rows clearly marked `[Smoke Test]` if they are no longer needed.
+
+## Tester Feedback Web App
+
+Iteration 5 exposes a mobile-first feedback page without granting testers access to the spreadsheet. The URL contains only the tester's existing random bearer token and an Activity ID:
+
+```text
+https://script.google.com/macros/s/DEPLOYMENT_ID/exec?tester=TESTER_TOKEN&activity=ACTIVITY_ID
+```
+
+The URL does not expose email addresses, row numbers, Spreadsheet IDs, or Script IDs. `doGet(e)` validates the token, activity, activity ownership, and task before rendering any tester or task details. Invalid requests receive a friendly generic page without stack traces or internal data.
+
+### Feedback Page
+
+The page displays the tester's name, task day and AM/PM period, task title, and instructions. It collects:
+
+- Whether the activity was completed
+- Rating from 1 through 5
+- Whether a bug was encountered
+- An optional comment of up to 2,000 characters
+
+The browser calls `submitFeedback(payload)` through `google.script.run`. All values are validated again on the server; URL and browser values are never trusted by themselves.
+
+### Submission Behavior
+
+Valid submissions append one row to the existing `Feedback` sheet using these fields:
+
+```text
+Feedback ID | Tester ID | Task ID | Rating | Completed | Bug Reported | Comment | Submitted At
+```
+
+`Completed` and `Bug Reported` are stored as Booleans. Tokens are never stored in `Feedback`. When `Completed` is true, submission reuses the existing activity completion logic so the Activity Log status becomes `Completed` and `Completed At` is set. A false completion answer leaves the activity incomplete while still recording feedback.
+
+Feedback is idempotent under a document lock. Only one Feedback row is permitted for each Tester ID and Task ID. Repeated button clicks or browser retries return a successful `alreadySubmitted` result and do not append another row.
+
+### Feedback URL Configuration
+
+The Web App deployment URL is stored in Script Properties, never hardcoded:
+
+```javascript
+setFeedbackWebAppUrl('https://script.google.com/macros/s/DEPLOYMENT_ID/exec');
+getFeedbackWebAppUrl();
+getFeedbackUrlForActivity('ACTIVITY_ID');
+```
+
+Reminder emails require this configuration so they can include a personalized link. If it is missing, that tester's reminder fails safely and the batch summary reports the failure.
+
+### Security Model
+
+The tester token is treated as a bearer identifier. Keep personalized links private. The Web App returns only the single validated tester/task context needed by the page, never the full tester dataset. Every submission rechecks ownership server-side and permits no arbitrary row access. Testers do not need spreadsheet edit or view access.
+
+### Feedback Smoke Test
+
+After deploying and configuring the `/exec` URL, run **Tester Automation → Feedback → Run Feedback Smoke Test** or execute:
+
+```javascript
+runFeedbackSmokeTest();
+```
+
+The test creates a uniquely named `[Smoke Test] Feedback Web App Tester`, activates it on Day 1, assigns the Day 1 AM task, generates a personalized URL, validates token ownership, submits a five-star smoke-test Feedback row, completes the activity, and confirms a repeated submission is blocked. It also assigns the PM task and displays a fresh personalized URL in a spreadsheet alert for manual browser testing. It does not modify or delete real tester rows. Smoke-test rows remain for manual review.
+
+### Web App Deployment
+
+1. Push the current source with `npm run clasp:push`.
+2. Open the bound Apps Script project with `npm run clasp:open` or **Extensions → Apps Script** from the spreadsheet.
+3. Select **Deploy → New deployment**.
+4. Click **Select type**, then choose **Web app**.
+5. Set **Execute as** to the script owner so external testers do not need spreadsheet permission.
+6. Set **Who has access** to the option that permits the intended external testers, typically **Anyone**. Google Workspace policy may restrict this option; do not proceed until the required tester access is available.
+7. Deploy, complete the authorization prompt, and copy the Web App URL ending in `/exec`.
+8. In the spreadsheet, choose **Tester Automation → Feedback → Configure Web App URL** and paste the `/exec` URL. This menu action calls:
+
+```javascript
+setFeedbackWebAppUrl('DEPLOYMENT_URL');
+```
+
+9. Choose **Tester Automation → Feedback → Run Feedback Smoke Test** and copy the fresh test-form URL shown in the success alert.
+10. Submit test feedback from a private/incognito browser that does not have spreadsheet access.
+11. Confirm one Feedback row was added and the related Activity Log row was completed.
+12. When code changes later, use **Deploy → Manage deployments → Edit**, select the new version, and deploy the update. Existing `/exec` links continue using that deployment URL.
+
+The three URLs are different:
+
+- **Spreadsheet URL:** opens the private datastore spreadsheet for operators.
+- **Apps Script project URL:** opens the private code editor and deployment controls.
+- **Web App deployment URL:** ends in `/exec` and is the only base URL used in tester feedback links.
+
+### Visible Menu Results
+
+The spreadsheet menu now wraps initialization, health checks, all smoke tests, task seeding and assignment, reminder runs, and trigger installation/removal. Successful operations display a toast with counts or status. Missing configuration and failures display an alert in Google Sheets. The Feedback submenu can check whether a Web App URL is configured, run the smoke test, or show concise deployment instructions.
+
+## Smart Tester Monitoring
+
+Iteration 6 derives tester status from genuine participation recorded in Activity Log and Feedback. Reminder delivery is not participation. The monitoring engine uses calendar dates in the Apps Script project timezone, not elapsed 24-hour durations.
+
+### Participation Summary
+
+The following helpers expose structured monitoring data without changing tester status:
+
+```javascript
+getTesterParticipationSummary('TESTER_ID');
+getTesterLastActivityDate('TESTER_ID');
+getTesterCompletedActivityCount('TESTER_ID');
+getTesterFeedbackCount('TESTER_ID');
+determineTesterStatus('TESTER_ID');
+```
+
+Meaningful participation consists only of:
+
+- An Activity Log row with `Status = Completed` and a valid `Completed At` timestamp
+- A Feedback row with a valid `Submitted At` timestamp
+
+`getTesterParticipationSummary()` returns current test day, assigned and completed activity counts, feedback count, last participation timestamp, days since participation, and the amount of participation recorded inside the tester's 14-day window. When no participation exists, inactivity is measured from the Start Date so a new tester receives a short grace period.
+
+### Automatic Status Rules
+
+Status precedence and recommendations are:
+
+- `Inactive`: always preserved as a manual exclusion or opt-out. Monitoring never overwrites it.
+- `Not Started`: no Start Date, or the Start Date is in the future.
+- `Active`: currently within Day 1–14 and participation occurred today or one calendar day ago. A tester with no participation also remains Active during Day 1 and Day 2 as the initial grace period.
+- `Needs Reminder`: currently within Day 1–14 with exactly two calendar days since meaningful participation, or Day 3 with no participation since starting.
+- `At Risk`: three or more calendar days without meaningful participation. A tester whose 14-day period ends with no in-period participation is also At Risk.
+- `Completed`: current day is after Day 14 and at least one completed activity or feedback submission occurred within that tester's Day 1–14 window.
+
+Passing Day 14 alone never causes `Completed`. Automatic monitoring does not set `Inactive` and does not send special escalation emails.
+
+`determineTesterStatus(testerId)` returns the recommendation and reason without mutation. `refreshTesterStatus(testerId)` applies a changed recommendation through the existing tester update service. `refreshAllTesterStatuses()` processes every tester independently and returns processed, changed, unchanged, failed, change, and error summaries without tokens.
+
+### Monitoring Sheet
+
+`initializeSpreadsheet()` now creates the operational `Monitoring` sheet idempotently with these headers:
+
+```text
+Tester ID | Name | Email | Current Day | Status | Completed Activities | Feedback Count | Last Participation At | Days Since Participation | Updated At
+```
+
+`refreshMonitoringSheet()` clears and rebuilds only rows below the Monitoring header. It writes one derived row per tester and never modifies Testers, Activity Log, or Feedback source rows. This is an operational view, not the final dashboard.
+
+### Monitoring Refresh
+
+Use **Tester Automation → Monitoring → Refresh Monitoring**, or call:
+
+```javascript
+runMonitoringRefresh();
+```
+
+This first refreshes all automatic tester statuses, then rebuilds the Monitoring sheet. The spreadsheet menu displays processed, changed, Active, Needs Reminder, At Risk, Completed, and failed counts in a toast or alert.
+
+### Monitoring Trigger
+
+Use the Monitoring menu or these functions:
+
+```javascript
+installMonitoringTrigger();
+removeMonitoringTrigger();
+```
+
+The installer creates one daily `runMonitoringRefresh` time-driven trigger at approximately 7:00 PM in the project timezone. It is duplicate-safe. Removal deletes only triggers whose handler is `runMonitoringRefresh`; the 9:00 AM and 6:00 PM reminder triggers are untouched.
+
+### Reminder Eligibility
+
+Normal AM/PM task reminders now continue for `Active`, `Needs Reminder`, and `At Risk` testers. They remain disabled for `Not Started`, `Completed`, and manually `Inactive` testers. This change does not add escalation templates or change reminder content.
+
+### Monitoring Smoke Test
+
+Run **Tester Automation → Monitoring → Run Monitoring Smoke Test** or execute:
+
+```javascript
+runMonitoringSmokeTest();
+```
+
+The test creates isolated `[Smoke Test]` testers for future start, recent participation, two-day inactivity, three-day inactivity, post-Day-14 participation, and manual Inactive scenarios. It backdates only its own smoke-test activity to verify in-period completion, checks an idempotent second refresh, preserves Inactive, and confirms a Monitoring row is generated. Existing real tester source rows are not changed; persistent smoke-test rows remain for manual review.
 
 ## Local Development Workflow
 
