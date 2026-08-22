@@ -1,3 +1,17 @@
+function onOpen() {
+  SpreadsheetApp.getUi()
+    .createMenu('Tester Automation')
+    .addItem('Initialize Spreadsheet', 'initializeSpreadsheet')
+    .addItem('Run Health Check', 'healthCheck')
+    .addSeparator()
+    .addItem('Run Tester Smoke Test', 'runTesterServiceSmokeTest')
+    .addSeparator()
+    .addItem('Seed Default Tasks', 'seedDefaultTasks')
+    .addItem('Assign Today\'s Tasks for Active Testers', 'assignTodayTasksForAllActiveTesters')
+    .addItem('Run Task Engine Smoke Test', 'runTaskEngineSmokeTest')
+    .addToUi();
+}
+
 function initializeSpreadsheet() {
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   var result = {
