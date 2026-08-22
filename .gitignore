@@ -13,3 +13,4 @@ token.json
 # Local operating-system files
 .DS_Store
 Thumbs.db
+.clasp.json
