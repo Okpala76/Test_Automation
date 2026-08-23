@@ -5,6 +5,12 @@ function onOpen() {
     .addItem('Initialize Spreadsheet', 'menuInitializeSpreadsheet')
     .addItem('Run Health Check', 'menuRunHealthCheck')
     .addSeparator()
+    .addSubMenu(
+      ui
+        .createMenu('Testers')
+        .addItem('Import New Testers', 'menuImportNewTesters')
+        .addItem('Activate Not Started Testers', 'menuActivateNotStartedTesters')
+    )
     .addItem('Run Tester Smoke Test', 'menuRunTesterSmokeTest')
     .addSeparator()
     .addItem('Seed Default Tasks', 'menuSeedDefaultTasks')
@@ -102,6 +108,78 @@ function menuRunTesterSmokeTest() {
       'Tester smoke test passed\nStatus: ' + result.status,
       'Tester Automation'
     );
+  });
+}
+
+function menuImportNewTesters() {
+  runMenuAction_(function () {
+    var result = bulkImportTesters();
+    var message =
+      'Tester import complete' +
+      '\nProcessed: ' + result.processed +
+      '\nImported: ' + result.imported +
+      '\nSkipped: ' + result.skipped +
+      '\nFailed: ' + result.failed;
+    if (result.errors.length > 0) {
+      message +=
+        '\nFirst issue: Row ' + result.errors[0].row +
+        ' - ' + result.errors[0].message;
+    }
+    if (result.failed > 0 || result.skipped > 0) {
+      showMenuAlert_('Tester Import Summary', message);
+      return;
+    }
+    showMenuToast_(message, 'Tester Automation');
+  });
+}
+
+function menuActivateNotStartedTesters() {
+  runMenuAction_(function () {
+    var ui = SpreadsheetApp.getUi();
+    var response = ui.prompt(
+      'Activate Not Started Testers',
+      'Enter the common testing Start Date in YYYY-MM-DD format:',
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (response.getSelectedButton() !== ui.Button.OK) {
+      showMenuToast_('Tester activation cancelled.', 'Tester Automation');
+      return;
+    }
+
+    var startDate = response.getResponseText().trim();
+    normalizeBulkActivationStartDate_(startDate);
+    var eligible = countNotStartedTesters_();
+    if (eligible === 0) {
+      showMenuToast_('No Not Started testers are eligible for activation.', 'Tester Automation');
+      return;
+    }
+
+    var confirmation = ui.alert(
+      'Confirm Tester Activation',
+      'Activate ' + eligible + ' Not Started tester(s) with Start Date ' + startDate +
+        '?\n\nDo not continue unless the actual testing start date is confirmed.',
+      ui.ButtonSet.YES_NO
+    );
+    if (confirmation !== ui.Button.YES) {
+      showMenuToast_('Tester activation cancelled.', 'Tester Automation');
+      return;
+    }
+
+    var result = activateAllNotStartedTesters(startDate);
+    var message =
+      'Tester activation complete' +
+      '\nEligible at confirmation: ' + eligible +
+      '\nProcessed: ' + result.processed +
+      '\nActivated: ' + result.activated +
+      '\nFailed: ' + result.failed;
+    if (result.errors.length > 0) {
+      message +=
+        '\nFirst error: Row ' + result.errors[0].row +
+        ' - ' + result.errors[0].message;
+      showMenuAlert_('Tester Activation Summary', message);
+      return;
+    }
+    showMenuToast_(message, 'Tester Automation');
   });
 }
 

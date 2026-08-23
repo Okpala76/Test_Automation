@@ -43,6 +43,213 @@ function addTester(name, email, startDate) {
   }
 }
 
+function bulkImportTesters() {
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+
+  try {
+    var context = getTesterSheetContext_();
+    var summary = {
+      processed: 0,
+      imported: 0,
+      skipped: 0,
+      failed: 0,
+      errors: []
+    };
+    var lastRow = context.sheet.getLastRow();
+    if (lastRow <= 1) {
+      return summary;
+    }
+
+    var rows = context.sheet
+      .getRange(2, 1, lastRow - 1, context.headers.length)
+      .getValues();
+    var testerIdIndex = context.columnIndexes['Tester ID'] - 1;
+    var nameIndex = context.columnIndexes['Name'] - 1;
+    var emailIndex = context.columnIndexes['Email'] - 1;
+    var startDateIndex = context.columnIndexes['Start Date'] - 1;
+    var statusIndex = context.columnIndexes['Status'] - 1;
+    var tokenIndex = context.columnIndexes['Token'] - 1;
+    var createdAtIndex = context.columnIndexes['Created At'] - 1;
+    var updatedAtIndex = context.columnIndexes['Updated At'] - 1;
+    var seenEmails = Object.create(null);
+    var usedTesterIds = Object.create(null);
+    var usedTokens = Object.create(null);
+
+    rows.forEach(function (row) {
+      var testerId = normalizeLookupValue_(row[testerIdIndex]);
+      var token = normalizeLookupValue_(row[tokenIndex]);
+      if (testerId) {
+        usedTesterIds[testerId] = true;
+        var existingEmail = normalizeLookupValue_(row[emailIndex]).toLowerCase();
+        if (existingEmail) {
+          seenEmails[existingEmail] = true;
+        }
+      } else if (
+        normalizeLookupValue_(row[startDateIndex]) ||
+        normalizeLookupValue_(row[statusIndex]) ||
+        normalizeLookupValue_(row[tokenIndex]) ||
+        normalizeLookupValue_(row[createdAtIndex]) ||
+        normalizeLookupValue_(row[updatedAtIndex])
+      ) {
+        try {
+          seenEmails[normalizeTesterEmail_(row[emailIndex])] = true;
+        } catch (error) {
+          // Invalid partial rows are reported during normal row processing.
+        }
+      }
+      if (token) {
+        usedTokens[token] = true;
+      }
+    });
+
+    rows.forEach(function (row, index) {
+      var sheetRow = index + 2;
+      var testerId = normalizeLookupValue_(row[testerIdIndex]);
+      var rawName = row[nameIndex];
+      var rawEmail = row[emailIndex];
+      if (
+        testerId ||
+        (!normalizeLookupValue_(rawName) && !normalizeLookupValue_(rawEmail))
+      ) {
+        return;
+      }
+
+      summary.processed += 1;
+      try {
+        normalizeTesterName_(rawName);
+        var normalizedEmail = normalizeTesterEmail_(rawEmail);
+
+        if (
+          normalizeLookupValue_(row[startDateIndex]) ||
+          normalizeLookupValue_(row[statusIndex]) ||
+          normalizeLookupValue_(row[tokenIndex]) ||
+          normalizeLookupValue_(row[createdAtIndex]) ||
+          normalizeLookupValue_(row[updatedAtIndex])
+        ) {
+          summary.skipped += 1;
+          summary.errors.push({
+            row: sheetRow,
+            type: 'skipped',
+            message: 'Row contains existing onboarding data and was not overwritten.'
+          });
+          seenEmails[normalizedEmail] = true;
+          return;
+        }
+        if (seenEmails[normalizedEmail]) {
+          summary.skipped += 1;
+          summary.errors.push({
+            row: sheetRow,
+            type: 'skipped',
+            message: 'Duplicate tester email.'
+          });
+          return;
+        }
+
+        var newTesterId = generateUniqueBulkTesterValue_(
+          generateTesterId,
+          usedTesterIds
+        );
+        var newToken = generateUniqueBulkTesterValue_(
+          generateTesterToken,
+          usedTokens
+        );
+        var now = new Date();
+        var importedRow = row.slice();
+        importedRow[testerIdIndex] = newTesterId;
+        importedRow[statusIndex] = TESTER_STATUSES.NOT_STARTED;
+        importedRow[tokenIndex] = newToken;
+        importedRow[createdAtIndex] = now;
+        importedRow[updatedAtIndex] = now;
+
+        context.sheet
+          .getRange(sheetRow, 1, 1, context.headers.length)
+          .setValues([importedRow]);
+        usedTesterIds[newTesterId] = true;
+        usedTokens[newToken] = true;
+        seenEmails[normalizedEmail] = true;
+        summary.imported += 1;
+      } catch (error) {
+        summary.failed += 1;
+        summary.errors.push({
+          row: sheetRow,
+          type: 'failed',
+          message: error.message
+        });
+      }
+    });
+
+    return summary;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function activateAllNotStartedTesters(startDate) {
+  var normalizedStartDate = normalizeBulkActivationStartDate_(startDate);
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+
+  try {
+    var context = getTesterSheetContext_();
+    var summary = {
+      processed: 0,
+      activated: 0,
+      failed: 0,
+      errors: [],
+      startDate: normalizedStartDate
+    };
+    var lastRow = context.sheet.getLastRow();
+    if (lastRow <= 1) {
+      return summary;
+    }
+
+    var rows = context.sheet
+      .getRange(2, 1, lastRow - 1, context.headers.length)
+      .getValues();
+    var testerIdIndex = context.columnIndexes['Tester ID'] - 1;
+    var statusIndex = context.columnIndexes['Status'] - 1;
+    rows.forEach(function (row, index) {
+      if (
+        !normalizeLookupValue_(row[testerIdIndex]) ||
+        row[statusIndex] !== TESTER_STATUSES.NOT_STARTED
+      ) {
+        return;
+      }
+
+      var sheetRow = index + 2;
+      summary.processed += 1;
+      try {
+        var now = new Date();
+        var activatedRow = row.slice();
+        activatedRow[context.columnIndexes['Start Date'] - 1] = normalizedStartDate;
+        activatedRow[statusIndex] = TESTER_STATUSES.ACTIVE;
+        activatedRow[context.columnIndexes['Updated At'] - 1] = now;
+        context.sheet
+          .getRange(sheetRow, 1, 1, context.headers.length)
+          .setValues([activatedRow]);
+        summary.activated += 1;
+      } catch (error) {
+        summary.failed += 1;
+        summary.errors.push({
+          row: sheetRow,
+          message: error.message
+        });
+      }
+    });
+
+    return summary;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function countNotStartedTesters_() {
+  return getAllTesters().filter(function (tester) {
+    return tester.status === TESTER_STATUSES.NOT_STARTED;
+  }).length;
+}
+
 function getTesterById(testerId) {
   var normalizedId = normalizeLookupValue_(testerId);
   if (!normalizedId) {
@@ -339,6 +546,17 @@ function generateUniqueTesterValue_(generator, lookup) {
   throw new Error('Unable to generate a unique tester identifier. Please try again.');
 }
 
+function generateUniqueBulkTesterValue_(generator, usedValues) {
+  for (var attempt = 0; attempt < 10; attempt += 1) {
+    var value = generator();
+    if (!Object.prototype.hasOwnProperty.call(usedValues, value)) {
+      return value;
+    }
+  }
+
+  throw new Error('Unable to generate a unique tester identifier. Please try again.');
+}
+
 function normalizeTesterName_(name) {
   if (typeof name !== 'string' || name.trim() === '') {
     throw new Error('Tester name is required.');
@@ -375,6 +593,32 @@ function normalizeTesterStartDate_(startDate) {
   }
 
   return normalizedDate;
+}
+
+function normalizeBulkActivationStartDate_(startDate) {
+  if (startDate instanceof Date) {
+    var normalizedDate = normalizeTesterStartDate_(startDate);
+    if (!normalizedDate) {
+      throw new Error('A Start Date is required.');
+    }
+    return normalizedDate;
+  }
+  if (typeof startDate !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(startDate.trim())) {
+    throw new Error('Start Date must use YYYY-MM-DD format.');
+  }
+
+  var input = startDate.trim();
+  var timezone = Session.getScriptTimeZone();
+  var parsed;
+  try {
+    parsed = Utilities.parseDate(input, timezone, 'yyyy-MM-dd');
+  } catch (error) {
+    throw new Error('Start Date must be a valid calendar date in YYYY-MM-DD format.');
+  }
+  if (Utilities.formatDate(parsed, timezone, 'yyyy-MM-dd') !== input) {
+    throw new Error('Start Date must be a valid calendar date in YYYY-MM-DD format.');
+  }
+  return parsed;
 }
 
 function validateTesterStatus_(status) {
