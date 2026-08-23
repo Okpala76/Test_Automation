@@ -102,100 +102,114 @@ function determineTesterStatus(testerId) {
   }
 
   var summary = getTesterParticipationSummary(tester.testerId);
-  if (!isValidMonitoringDate_(tester.startDate)) {
-    return statusRecommendation_(
-      tester,
-      summary,
-      TESTER_STATUSES.NOT_STARTED,
-      'No Start Date is configured.'
-    );
-  }
-  if (summary.currentDay === 0) {
-    return statusRecommendation_(
-      tester,
-      summary,
-      TESTER_STATUSES.NOT_STARTED,
-      'The testing Start Date is in the future.'
-    );
-  }
-  if (summary.currentDay > TESTING_PLAN_DAYS) {
-    if (summary.participationDuringTest > 0) {
-      return statusRecommendation_(
-        tester,
-        summary,
-        TESTER_STATUSES.COMPLETED,
-        'The 14-day period ended with recorded participation.'
-      );
-    }
-    return statusRecommendation_(
-      tester,
-      summary,
-      TESTER_STATUSES.AT_RISK,
-      'The 14-day period ended without recorded participation.'
-    );
-  }
-
-  if (summary.daysSinceParticipation >= 3) {
-    return statusRecommendation_(
-      tester,
-      summary,
-      TESTER_STATUSES.AT_RISK,
-      'No completed activity or feedback for ' +
-        summary.daysSinceParticipation +
-        ' calendar days.'
-    );
-  }
-  if (summary.daysSinceParticipation === 2) {
-    return statusRecommendation_(
-      tester,
-      summary,
-      TESTER_STATUSES.NEEDS_REMINDER,
-      'No completed activity or feedback for 2 calendar days.'
-    );
-  }
-
+  var recommendation = recommendTesterStatusFromFacts_({
+    currentStatus: tester.status,
+    hasStartDate: isValidMonitoringDate_(tester.startDate),
+    currentDay: summary.currentDay,
+    daysSinceParticipation: summary.daysSinceParticipation,
+    participationDuringTest: summary.participationDuringTest,
+    hasParticipation: Boolean(summary.lastParticipationAt)
+  });
   return statusRecommendation_(
     tester,
     summary,
-    TESTER_STATUSES.ACTIVE,
-    summary.lastParticipationAt
-      ? 'Meaningful participation occurred within the previous 1 calendar day.'
-      : 'The tester is within the initial 1-day participation grace period.'
+    recommendation.status,
+    recommendation.reason
   );
 }
 
-function refreshTesterStatus(testerId) {
-  var recommendation = determineTesterStatus(testerId);
-  if (recommendation.currentStatus === TESTER_STATUSES.INACTIVE) {
+function recommendTesterStatusFromFacts_(facts) {
+  if (facts.currentStatus === TESTER_STATUSES.INACTIVE) {
     return {
-      testerId: testerId,
-      changed: false,
-      previousStatus: TESTER_STATUSES.INACTIVE,
       status: TESTER_STATUSES.INACTIVE,
-      reason: recommendation.reason
+      reason: 'Inactive is a manual override and is preserved.'
     };
   }
+  if (!facts.hasStartDate) {
+    return {
+      status: TESTER_STATUSES.NOT_STARTED,
+      reason: 'No Start Date is configured.'
+    };
+  }
+  if (facts.currentDay === 0) {
+    return {
+      status: TESTER_STATUSES.NOT_STARTED,
+      reason: 'The testing Start Date is in the future.'
+    };
+  }
+  if (facts.currentDay > TESTING_PLAN_DAYS) {
+    return facts.participationDuringTest > 0
+      ? {
+          status: TESTER_STATUSES.COMPLETED,
+          reason: 'The 14-day period ended with recorded participation.'
+        }
+      : {
+          status: TESTER_STATUSES.AT_RISK,
+          reason: 'The 14-day period ended without recorded participation.'
+        };
+  }
+  if (facts.daysSinceParticipation >= 3) {
+    return {
+      status: TESTER_STATUSES.AT_RISK,
+      reason:
+        'No completed activity or feedback for ' +
+        facts.daysSinceParticipation +
+        ' calendar days.'
+    };
+  }
+  if (facts.daysSinceParticipation === 2) {
+    return {
+      status: TESTER_STATUSES.NEEDS_REMINDER,
+      reason: 'No completed activity or feedback for 2 calendar days.'
+    };
+  }
+  return {
+    status: TESTER_STATUSES.ACTIVE,
+    reason: facts.hasParticipation
+      ? 'Meaningful participation occurred within the previous 1 calendar day.'
+      : 'The tester is within the initial 1-day participation grace period.'
+  };
+}
 
-  if (recommendation.currentStatus === recommendation.recommendedStatus) {
+function refreshTesterStatus(testerId) {
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+
+  try {
+    var recommendation = determineTesterStatus(testerId);
+    if (recommendation.currentStatus === TESTER_STATUSES.INACTIVE) {
+      return {
+        testerId: testerId,
+        changed: false,
+        previousStatus: TESTER_STATUSES.INACTIVE,
+        status: TESTER_STATUSES.INACTIVE,
+        reason: recommendation.reason
+      };
+    }
+
+    if (recommendation.currentStatus === recommendation.recommendedStatus) {
+      return {
+        testerId: testerId,
+        changed: false,
+        previousStatus: recommendation.currentStatus,
+        status: recommendation.currentStatus,
+        reason: recommendation.reason
+      };
+    }
+
+    var updated = updateTesterWithoutLock_(testerId, {
+      status: recommendation.recommendedStatus
+    });
     return {
       testerId: testerId,
-      changed: false,
+      changed: true,
       previousStatus: recommendation.currentStatus,
-      status: recommendation.currentStatus,
+      status: updated.status,
       reason: recommendation.reason
     };
+  } finally {
+    lock.releaseLock();
   }
-
-  var updated = updateTester(testerId, {
-    status: recommendation.recommendedStatus
-  });
-  return {
-    testerId: testerId,
-    changed: true,
-    previousStatus: recommendation.currentStatus,
-    status: updated.status,
-    reason: recommendation.reason
-  };
 }
 
 function refreshAllTesterStatuses() {
@@ -304,54 +318,75 @@ function refreshMonitoringSheet() {
 function runMonitoringRefresh() {
   var statuses = refreshAllTesterStatuses();
   var monitoring = refreshMonitoringSheet();
+  var dashboard = null;
+  var dashboardErrors = [];
+  try {
+    dashboard = refreshDashboardFromCurrentMonitoring_();
+  } catch (error) {
+    dashboardErrors.push({
+      component: 'Dashboard',
+      message: error.message
+    });
+  }
 
   return {
     processed: statuses.processed,
     changed: statuses.changed,
     unchanged: statuses.unchanged,
-    failed: statuses.failed + monitoring.failed,
+    failed: statuses.failed + monitoring.failed + dashboardErrors.length,
     changes: statuses.changes,
-    errors: statuses.errors.concat(monitoring.errors),
+    errors: statuses.errors.concat(monitoring.errors, dashboardErrors),
     rowsWritten: monitoring.rowsWritten,
-    statusCounts: monitoring.statusCounts
+    statusCounts: monitoring.statusCounts,
+    dashboard: dashboard
   };
 }
 
 function installMonitoringTrigger() {
-  var existing = ScriptApp.getProjectTriggers().some(function (trigger) {
-    return trigger.getHandlerFunction() === MONITORING_TRIGGER_HANDLER;
-  });
-  if (existing) {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    var existing = ScriptApp.getProjectTriggers().some(function (trigger) {
+      return trigger.getHandlerFunction() === MONITORING_TRIGGER_HANDLER;
+    });
+    if (existing) {
+      return {
+        created: false,
+        existing: true
+      };
+    }
+
+    createDailyAutomationTrigger_(MONITORING_TRIGGER_HANDLER, 19);
+
     return {
-      created: false,
-      existing: true
+      created: true,
+      existing: false
     };
+  } finally {
+    lock.releaseLock();
   }
-
-  ScriptApp.newTrigger(MONITORING_TRIGGER_HANDLER)
-    .timeBased()
-    .everyDays(1)
-    .atHour(19)
-    .create();
-
-  return {
-    created: true,
-    existing: false
-  };
 }
 
 function removeMonitoringTrigger() {
-  var removed = 0;
-  ScriptApp.getProjectTriggers().forEach(function (trigger) {
-    if (trigger.getHandlerFunction() === MONITORING_TRIGGER_HANDLER) {
-      ScriptApp.deleteTrigger(trigger);
-      removed += 1;
-    }
-  });
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
 
-  return {
-    removed: removed
-  };
+  try {
+    var removed = 0;
+    ScriptApp.getProjectTriggers().forEach(function (trigger) {
+      if (trigger.getHandlerFunction() === MONITORING_TRIGGER_HANDLER) {
+        ScriptApp.deleteTrigger(trigger);
+        removed += 1;
+      }
+    });
+
+    return {
+      removed: removed
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function runMonitoringSmokeTest() {
@@ -499,14 +534,7 @@ function calculateMonitoringCurrentDay_(tester) {
   if (!isValidMonitoringDate_(tester.startDate)) {
     return 0;
   }
-
-  var elapsed = monitoringCalendarDayDifference_(tester.startDate, new Date());
-  if (elapsed < 0) {
-    return 0;
-  }
-
-  var day = elapsed + 1;
-  return day > TESTING_PLAN_DAYS ? POST_TEST_DAY : day;
+  return calculateTestingDayForDates_(normalizeMonitoringDate_(tester.startDate), new Date());
 }
 
 function calculateDaysSinceParticipation_(tester, lastParticipationAt) {

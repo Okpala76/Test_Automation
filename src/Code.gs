@@ -39,6 +39,31 @@ function onOpen() {
         .addItem('Remove Monitoring Trigger', 'menuRemoveMonitoringTrigger')
         .addItem('Run Monitoring Smoke Test', 'menuRunMonitoringSmokeTest')
     )
+    .addSubMenu(
+      ui
+        .createMenu('Dashboard')
+        .addItem('Refresh Dashboard', 'menuRefreshDashboard')
+        .addItem('Show Dashboard Summary', 'menuShowDashboardSummary')
+        .addItem('Run Dashboard Smoke Test', 'menuRunDashboardSmokeTest')
+    )
+    .addSubMenu(
+      ui
+        .createMenu('System')
+        .addItem('Run Readiness Check', 'menuRunSystemReadinessCheck')
+        .addItem('Check Configuration Health', 'menuCheckSystemConfigurationHealth')
+        .addItem('Check Automation Triggers', 'menuCheckAutomationTriggerHealth')
+        .addItem('Repair Automation Triggers', 'menuRepairAutomationTriggers')
+        .addSeparator()
+        .addItem('Run Deterministic Logic Tests', 'menuRunDeterministicLogicTests')
+        .addItem('Run Full System Dry Run', 'menuRunFullSystemDryRun')
+        .addItem('Cleanup Smoke-Test Data', 'menuCleanupSmokeTestData')
+    )
+    .addSubMenu(
+      ui
+        .createMenu('Help')
+        .addItem('Open Guide', 'menuOpenGuide')
+        .addItem('Refresh Guide', 'menuRefreshGuide')
+    )
     .addToUi();
 }
 
@@ -262,6 +287,178 @@ function menuRunMonitoringSmokeTest() {
   });
 }
 
+function menuRefreshDashboard() {
+  runMenuAction_(function () {
+    var result = refreshDashboard();
+    showDashboardSummary_('Dashboard refreshed', result, false);
+  });
+}
+
+function menuShowDashboardSummary() {
+  runMenuAction_(function () {
+    var metrics = getDashboardMetrics();
+    showDashboardSummary_(
+      'Dashboard Summary',
+      {
+        totalTesters: metrics.totalTesters,
+        statusCounts: metrics.statusCounts,
+        attentionRequired: metrics.attentionRequired.length
+      },
+      true
+    );
+  });
+}
+
+function menuRunDashboardSmokeTest() {
+  runMenuAction_(function () {
+    var result = runDashboardSmokeTest();
+    showMenuAlert_(
+      'Dashboard Smoke Test Passed',
+      'Total testers: ' + result.totalTesters +
+        '\nStatuses counted: ' + result.statusesCounted +
+        '\nToday assigned: ' + result.todayAssigned +
+        '\nToday completed: ' + result.todayCompleted +
+        '\nFeedback: ' + result.feedbackSubmissions +
+        '\nBugs: ' + result.bugsReported +
+        '\nAttention required: ' + result.attentionRequired +
+        '\nSource data unchanged: ' + result.sourceDataUnchanged
+    );
+  });
+}
+
+function menuRunSystemReadinessCheck() {
+  runMenuAction_(function () {
+    var result = runSystemReadinessCheck();
+    var message =
+      (result.ok ? 'System is ready.' : 'System is not ready.') +
+      '\nPassed: ' + result.summary.passed +
+      '\nWarnings: ' + result.summary.warnings +
+      '\nFailures: ' + result.summary.failures;
+    if (result.failures.length > 0) {
+      message += '\n\nFailures:\n' + formatSystemIssues_(result.failures);
+    }
+    if (result.warnings.length > 0) {
+      message += '\n\nWarnings:\n' + formatSystemIssues_(result.warnings);
+    }
+    showMenuAlert_('System Readiness', message);
+  });
+}
+
+function menuCheckSystemConfigurationHealth() {
+  runMenuAction_(function () {
+    var result = getSystemConfigurationHealth();
+    showMenuAlert_(
+      'System Configuration',
+      'Feedback Web App URL valid: ' + result.feedbackWebAppUrlValid +
+        '\nEmail Test Mode: ' + result.emailTestMode +
+        '\nTest recipient valid: ' + result.testRecipientValid +
+        '\nSafe for dry run: ' + result.safeForDryRun +
+        '\nReady for live sending: ' + result.readyForLiveSending +
+        '\nScript timezone: ' + result.scriptTimeZone
+    );
+  });
+}
+
+function menuCheckAutomationTriggerHealth() {
+  runMenuAction_(function () {
+    var result = getAutomationTriggerHealth();
+    var lines = result.handlers.map(function (handler) {
+      return handler.handler + ': ' + (handler.healthy ? 'healthy' : 'repair required');
+    });
+    showMenuAlert_(
+      'Automation Trigger Health',
+      (result.ok ? 'All managed triggers are healthy.' : 'Trigger repair is required.') +
+        '\n\n' + lines.join('\n') +
+        '\nScope: current trigger owner only' +
+        '\nUnrelated triggers left unmanaged: ' + result.unrelatedTriggerCount
+    );
+  });
+}
+
+function menuRepairAutomationTriggers() {
+  runMenuAction_(function () {
+    var result = repairAutomationTriggers();
+    showMenuToast_(
+      'Automation trigger repair complete\nCreated: ' + result.created.length +
+        '\nRemoved: ' + result.removed.length +
+        '\nHealthy: ' + result.health.ok,
+      'Tester Automation'
+    );
+  });
+}
+
+function menuRunDeterministicLogicTests() {
+  runMenuAction_(function () {
+    var result = runDeterministicLogicTests();
+    showMenuToast_(
+      'Deterministic logic tests passed\nDate: ' + result.dateScenarios +
+        '\nStatus: ' + result.statusScenarios +
+        '\nFeedback: ' + result.feedbackScenarios +
+        '\nDashboard: ' + result.dashboardScenarios,
+      'Tester Automation'
+    );
+  });
+}
+
+function menuRunFullSystemDryRun() {
+  runMenuAction_(function () {
+    var result = runFullSystemDryRun();
+    showMenuAlert_(
+      'Full System Dry Run Passed',
+      'Reminder redirected in Test Mode: ' + result.reminderSentInTestMode +
+        '\nDuplicate reminder blocked: ' + result.duplicateReminderBlocked +
+        '\nFeedback recorded: ' + result.feedbackRecorded +
+        '\nDuplicate feedback blocked: ' + result.duplicateFeedbackBlocked +
+        '\nActivity completed: ' + result.activityCompleted +
+        '\nMonitoring rows: ' + result.monitoringRowsWritten +
+        '\nDashboard tester count: ' + result.dashboardTesterCount +
+        '\n\nSmoke-test rows remain until Cleanup Smoke-Test Data is run.'
+    );
+  });
+}
+
+function menuCleanupSmokeTestData() {
+  runMenuAction_(function () {
+    var ui = SpreadsheetApp.getUi();
+    var response = ui.alert(
+      'Cleanup Smoke-Test Data',
+      'Delete only rows tied unambiguously to testers whose names begin with [Smoke Test]? Tasks and headers will not be deleted.',
+      ui.ButtonSet.YES_NO
+    );
+    if (response !== ui.Button.YES) {
+      showMenuToast_('Smoke-test cleanup cancelled.', 'Tester Automation');
+      return;
+    }
+
+    var result = cleanupSmokeTestData();
+    showMenuToast_(
+      'Smoke-test cleanup complete\nTesters: ' + result.deleted.testers +
+        '\nActivities: ' + result.deleted.activities +
+        '\nFeedback: ' + result.deleted.feedback +
+        '\nMonitoring: ' + result.deleted.monitoring +
+        '\nAmbiguous rows skipped: ' + result.skippedAmbiguousTesterRows,
+      'Tester Automation'
+    );
+  });
+}
+
+function menuOpenGuide() {
+  runMenuAction_(function () {
+    var sheet = openGuide();
+    showMenuToast_('Guide opened: ' + sheet.getName(), 'Tester Automation');
+  });
+}
+
+function menuRefreshGuide() {
+  runMenuAction_(function () {
+    var result = refreshGuide();
+    showMenuToast_(
+      'Guide refreshed\nSections: ' + result.sectionCount,
+      'Tester Automation'
+    );
+  });
+}
+
 function runMenuAction_(action) {
   try {
     action();
@@ -313,6 +510,23 @@ function showMonitoringSummary_(heading, result) {
   showMenuToast_(message, 'Tester Automation');
 }
 
+function showDashboardSummary_(heading, result, useAlert) {
+  var counts = result.statusCounts || {};
+  var message =
+    heading +
+    '\nTotal testers: ' + result.totalTesters +
+    '\nActive: ' + (counts[TESTER_STATUSES.ACTIVE] || 0) +
+    '\nNeeds Reminder: ' + (counts[TESTER_STATUSES.NEEDS_REMINDER] || 0) +
+    '\nAt Risk: ' + (counts[TESTER_STATUSES.AT_RISK] || 0) +
+    '\nCompleted: ' + (counts[TESTER_STATUSES.COMPLETED] || 0) +
+    '\nAttention required: ' + result.attentionRequired;
+  if (useAlert) {
+    showMenuAlert_('Tester Automation', message);
+    return;
+  }
+  showMenuToast_(message, 'Tester Automation');
+}
+
 function showMenuToast_(message, title) {
   SpreadsheetApp.getActiveSpreadsheet().toast(message, title, 8);
 }
@@ -321,7 +535,28 @@ function showMenuAlert_(title, message) {
   SpreadsheetApp.getUi().alert(title, message, SpreadsheetApp.getUi().ButtonSet.OK);
 }
 
+function formatSystemIssues_(issues) {
+  var visible = issues.slice(0, 6).map(function (issue) {
+    return '- ' + issue;
+  });
+  if (issues.length > visible.length) {
+    visible.push('- ' + (issues.length - visible.length) + ' more');
+  }
+  return visible.join('\n');
+}
+
 function initializeSpreadsheet() {
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+
+  try {
+    return initializeSpreadsheetWithoutLock_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function initializeSpreadsheetWithoutLock_() {
   var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
   var result = {
     createdSheets: [],
@@ -348,6 +583,16 @@ function initializeSpreadsheet() {
 
   if (typeof ensureActivityLogReminderColumns_ === 'function') {
     ensureActivityLogReminderColumns_();
+  }
+  var guideSheet = spreadsheet.getSheetByName(GUIDE_SHEET_NAME);
+  if (
+    guideSheet &&
+    (result.createdSheets.indexOf(GUIDE_SHEET_NAME) !== -1 || guideSheet.getLastRow() === 0)
+  ) {
+    refreshGuideWithoutLock_();
+    result.guideInitialized = true;
+  } else {
+    result.guideInitialized = false;
   }
 
   Logger.log(JSON.stringify(result));

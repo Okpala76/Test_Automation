@@ -96,7 +96,11 @@ function getTaskForDayAndPeriod(day, period) {
   var tasks = getAllTasks();
 
   for (var index = 0; index < tasks.length; index += 1) {
-    if (tasks[index].day === normalizedDay && tasks[index].period === normalizedPeriod) {
+    if (
+      tasks[index].day === normalizedDay &&
+      tasks[index].period === normalizedPeriod &&
+      tasks[index].active
+    ) {
       return tasks[index];
     }
   }
@@ -270,8 +274,12 @@ function resolveActiveTester_(testerOrTesterId) {
 
 function calculateTesterCurrentDay_(tester) {
   var startDate = normalizeTesterStartDate_(tester.startDate);
+  return calculateTestingDayForDates_(startDate, new Date());
+}
+
+function calculateTestingDayForDates_(startDate, currentDate) {
   var startCalendarDate = calendarDateAsUtcMillis_(startDate);
-  var todayCalendarDate = calendarDateAsUtcMillis_(new Date());
+  var todayCalendarDate = calendarDateAsUtcMillis_(currentDate);
   var elapsedCalendarDays = Math.round(
     (todayCalendarDate - startCalendarDate) / (24 * 60 * 60 * 1000)
   );

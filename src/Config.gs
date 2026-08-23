@@ -49,7 +49,8 @@ var REQUIRED_SHEET_HEADERS = {
     'Last Participation At',
     'Days Since Participation',
     'Updated At'
-  ]
+  ],
+  'Guide': []
 };
 
 var TESTER_SHEET_NAME = 'Testers';
@@ -105,6 +106,7 @@ var REMINDER_ELIGIBLE_STATUSES = [
 
 var MONITORING_SHEET_NAME = 'Monitoring';
 var MONITORING_TRIGGER_HANDLER = 'runMonitoringRefresh';
+var GUIDE_SHEET_NAME = 'Guide';
 
 var DEFAULT_TASKS = [
   {

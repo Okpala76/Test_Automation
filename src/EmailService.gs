@@ -49,46 +49,73 @@ function sendTaskReminderEmail(tester, task, activity) {
   if (!activity || !activity.activityId) {
     throw new Error('A valid activity is required.');
   }
-  if (activity.testerId !== tester.testerId || activity.taskId !== task.taskId) {
-    throw new Error('The reminder activity does not match the tester and task.');
-  }
-  if (activity.status === ACTIVITY_STATUSES.COMPLETED) {
+  return runWithReminderDeliveryLocks_(function () {
+    var currentTester = getTesterById(tester.testerId);
+    if (
+      !currentTester ||
+      REMINDER_ELIGIBLE_STATUSES.indexOf(currentTester.status) === -1
+    ) {
+      return {
+        sent: false,
+        reason: 'not_eligible',
+        activityId: activity.activityId
+      };
+    }
+    var currentTask = getTaskById(task.taskId);
+    if (!currentTask || !currentTask.active) {
+      return {
+        sent: false,
+        reason: 'no_task',
+        activityId: activity.activityId
+      };
+    }
+    tester = currentTester;
+    task = currentTask;
+    activity = getActivityById(activity.activityId);
+    if (
+      !activity ||
+      activity.testerId !== tester.testerId ||
+      activity.taskId !== task.taskId
+    ) {
+      throw new Error('The reminder activity does not match the tester and task.');
+    }
+    if (activity.status === ACTIVITY_STATUSES.COMPLETED) {
+      return {
+        sent: false,
+        reason: 'already_completed',
+        activityId: activity.activityId
+      };
+    }
+    if (isAlreadyRemindedToday_(activity)) {
+      return {
+        sent: false,
+        reason: 'already_reminded',
+        activityId: activity.activityId
+      };
+    }
+
+    var recipient = resolveEmailRecipient_(tester.email);
+    var isTestMode = isEmailTestModeEnabled_();
+    var subject = buildReminderSubject_(task);
+    var body = buildReminderBody_(tester, task, activity, null);
+
+    MailApp.sendEmail({
+      to: recipient,
+      subject: subject,
+      body: body
+    });
+
+    recordReminderSentWithoutLock_(activity.activityId);
+
     return {
-      sent: false,
-      reason: 'already_completed',
+      sent: true,
+      to: recipient,
+      isTestMode: isTestMode,
+      testerId: tester.testerId,
+      taskId: task.taskId,
       activityId: activity.activityId
     };
-  }
-  if (isAlreadyRemindedToday_(activity)) {
-    return {
-      sent: false,
-      reason: 'already_reminded',
-      activityId: activity.activityId
-    };
-  }
-
-  var recipient = resolveEmailRecipient_(tester.email);
-  var isTestMode = isEmailTestModeEnabled_();
-  var subject = buildReminderSubject_(task);
-  var body = buildReminderBody_(tester, task, activity, null);
-
-  MailApp.sendEmail({
-    to: recipient,
-    subject: subject,
-    body: body
   });
-
-  // Record reminder only for the activity linked to this task.
-  recordReminderSent_(activity.activityId);
-
-  return {
-    sent: true,
-    to: recipient,
-    isTestMode: isTestMode,
-    testerId: tester.testerId,
-    taskId: task.taskId,
-    activityId: activity.activityId
-  };
 }
 
 function sendMorningReminders() {
@@ -160,58 +187,64 @@ function runEveningReminderTest() {
 }
 
 function installReminderTriggers() {
-  var existing = ScriptApp.getProjectTriggers();
-  var hasMorning = existing.some(function (t) {
-    return t.getHandlerFunction() === REMINDER_TRIGGER_HANDLERS.MORNING;
-  });
-  var hasEvening = existing.some(function (t) {
-    return t.getHandlerFunction() === REMINDER_TRIGGER_HANDLERS.EVENING;
-  });
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
 
-  var result = {
-    createdMorning: false,
-    createdEvening: false,
-    existingMorning: hasMorning,
-    existingEvening: hasEvening
-  };
+  try {
+    var existing = ScriptApp.getProjectTriggers();
+    var hasMorning = existing.some(function (t) {
+      return t.getHandlerFunction() === REMINDER_TRIGGER_HANDLERS.MORNING;
+    });
+    var hasEvening = existing.some(function (t) {
+      return t.getHandlerFunction() === REMINDER_TRIGGER_HANDLERS.EVENING;
+    });
 
-  if (!hasMorning) {
-    ScriptApp.newTrigger(REMINDER_TRIGGER_HANDLERS.MORNING)
-      .timeBased()
-      .everyDays(1)
-      .atHour(9)
-      .create();
-    result.createdMorning = true;
+    var result = {
+      createdMorning: false,
+      createdEvening: false,
+      existingMorning: hasMorning,
+      existingEvening: hasEvening
+    };
+
+    if (!hasMorning) {
+      createDailyAutomationTrigger_(REMINDER_TRIGGER_HANDLERS.MORNING, 9);
+      result.createdMorning = true;
+    }
+
+    if (!hasEvening) {
+      createDailyAutomationTrigger_(REMINDER_TRIGGER_HANDLERS.EVENING, 18);
+      result.createdEvening = true;
+    }
+
+    return result;
+  } finally {
+    lock.releaseLock();
   }
-
-  if (!hasEvening) {
-    ScriptApp.newTrigger(REMINDER_TRIGGER_HANDLERS.EVENING)
-      .timeBased()
-      .everyDays(1)
-      .atHour(18)
-      .create();
-    result.createdEvening = true;
-  }
-
-  return result;
 }
 
 function removeReminderTriggers() {
-  var triggers = ScriptApp.getProjectTriggers();
-  var removed = 0;
-  triggers.forEach(function (trigger) {
-    var handler = trigger.getHandlerFunction();
-    if (
-      handler === REMINDER_TRIGGER_HANDLERS.MORNING ||
-      handler === REMINDER_TRIGGER_HANDLERS.EVENING
-    ) {
-      ScriptApp.deleteTrigger(trigger);
-      removed += 1;
-    }
-  });
-  return {
-    removed: removed
-  };
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+
+  try {
+    var triggers = ScriptApp.getProjectTriggers();
+    var removed = 0;
+    triggers.forEach(function (trigger) {
+      var handler = trigger.getHandlerFunction();
+      if (
+        handler === REMINDER_TRIGGER_HANDLERS.MORNING ||
+        handler === REMINDER_TRIGGER_HANDLERS.EVENING
+      ) {
+        ScriptApp.deleteTrigger(trigger);
+        removed += 1;
+      }
+    });
+    return {
+      removed: removed
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function runEmailAutomationSmokeTest() {
@@ -306,102 +339,106 @@ function runEmailAutomationSmokeTest() {
 // Internal helpers for per-tester reminder flows.
 
 function sendMorningReminderForTester_(tester) {
-  var currentDay = getTesterCurrentDay(tester);
-  if (currentDay < 1 || currentDay > TESTING_PLAN_DAYS) {
-    return { sent: false, reason: 'out_of_range', currentDay: currentDay };
-  }
+  return runWithReminderDeliveryLocks_(function () {
+    tester = getTesterById(tester.testerId);
+    if (!tester || REMINDER_ELIGIBLE_STATUSES.indexOf(tester.status) === -1) {
+      return { sent: false, reason: 'not_eligible' };
+    }
+    var currentDay = getTesterCurrentDay(tester);
+    if (currentDay < 1 || currentDay > TESTING_PLAN_DAYS) {
+      return { sent: false, reason: 'out_of_range', currentDay: currentDay };
+    }
+    var task = getTaskForDayAndPeriod(currentDay, TASK_PERIODS.AM);
+    if (!task) {
+      return { sent: false, reason: 'no_task', currentDay: currentDay };
+    }
+    var activity = assignTaskToTesterWithResultWithoutLock_(
+      tester.testerId,
+      task.taskId
+    ).activity;
+    if (activity.status === ACTIVITY_STATUSES.COMPLETED) {
+      return { sent: false, reason: 'already_completed', activityId: activity.activityId };
+    }
+    if (isAlreadyRemindedToday_(activity)) {
+      return { sent: false, reason: 'already_reminded', activityId: activity.activityId };
+    }
 
-  var task = getTaskForDayAndPeriod(currentDay, TASK_PERIODS.AM);
-  if (!task) {
-    return { sent: false, reason: 'no_task', currentDay: currentDay };
-  }
+    var recipient = resolveEmailRecipient_(tester.email);
+    var subject = buildReminderSubject_(task);
+    var body = buildMorningBody_(tester, task, currentDay, activity);
 
-  // Assign if needed.
-  var activity = assignTaskToTester(tester.testerId, task.taskId);
-  // Refresh to include reminder fields.
-  activity = getActivityForTesterAndTask(tester.testerId, task.taskId);
+    MailApp.sendEmail({
+      to: recipient,
+      subject: subject,
+      body: body
+    });
 
-  if (activity.status === ACTIVITY_STATUSES.COMPLETED) {
-    return { sent: false, reason: 'already_completed', activityId: activity.activityId };
-  }
-  if (isAlreadyRemindedToday_(activity)) {
-    return { sent: false, reason: 'already_reminded', activityId: activity.activityId };
-  }
+    recordReminderSentWithoutLock_(activity.activityId);
 
-  var recipient = resolveEmailRecipient_(tester.email);
-  var subject = buildReminderSubject_(task);
-  var body = buildMorningBody_(tester, task, currentDay, activity);
-
-  MailApp.sendEmail({
-    to: recipient,
-    subject: subject,
-    body: body
+    return {
+      sent: true,
+      reason: 'sent',
+      activityId: activity.activityId,
+      taskId: task.taskId,
+      to: recipient
+    };
   });
-
-  recordReminderSent_(activity.activityId);
-
-  return {
-    sent: true,
-    reason: 'sent',
-    activityId: activity.activityId,
-    taskId: task.taskId,
-    to: recipient
-  };
 }
 
 function sendEveningReminderForTester_(tester) {
-  var currentDay = getTesterCurrentDay(tester);
-  if (currentDay < 1 || currentDay > TESTING_PLAN_DAYS) {
-    return { sent: false, reason: 'out_of_range', currentDay: currentDay };
-  }
-
-  var pmTask = getTaskForDayAndPeriod(currentDay, TASK_PERIODS.PM);
-  if (!pmTask) {
-    return { sent: false, reason: 'no_task', currentDay: currentDay };
-  }
-
-  var pmActivity = assignTaskToTester(tester.testerId, pmTask.taskId);
-  pmActivity = getActivityForTesterAndTask(tester.testerId, pmTask.taskId);
-
-  if (pmActivity.status === ACTIVITY_STATUSES.COMPLETED) {
-    return { sent: false, reason: 'already_completed', activityId: pmActivity.activityId };
-  }
-  if (isAlreadyRemindedToday_(pmActivity)) {
-    return { sent: false, reason: 'already_reminded', activityId: pmActivity.activityId };
-  }
-
-  var amTask = getTaskForDayAndPeriod(currentDay, TASK_PERIODS.AM);
-  var amActivity = null;
-  if (amTask) {
-    // Ensure AM activity exists for status note; do not force reminder.
-    var existingAm = getActivityForTesterAndTask(tester.testerId, amTask.taskId);
-    if (!existingAm) {
-      // Assign quietly without sending separate email.
-      assignTaskToTester(tester.testerId, amTask.taskId);
-      existingAm = getActivityForTesterAndTask(tester.testerId, amTask.taskId);
+  return runWithReminderDeliveryLocks_(function () {
+    tester = getTesterById(tester.testerId);
+    if (!tester || REMINDER_ELIGIBLE_STATUSES.indexOf(tester.status) === -1) {
+      return { sent: false, reason: 'not_eligible' };
     }
-    amActivity = existingAm;
-  }
+    var currentDay = getTesterCurrentDay(tester);
+    if (currentDay < 1 || currentDay > TESTING_PLAN_DAYS) {
+      return { sent: false, reason: 'out_of_range', currentDay: currentDay };
+    }
+    var pmTask = getTaskForDayAndPeriod(currentDay, TASK_PERIODS.PM);
+    if (!pmTask) {
+      return { sent: false, reason: 'no_task', currentDay: currentDay };
+    }
+    var pmActivity = assignTaskToTesterWithResultWithoutLock_(
+      tester.testerId,
+      pmTask.taskId
+    ).activity;
+    if (pmActivity.status === ACTIVITY_STATUSES.COMPLETED) {
+      return { sent: false, reason: 'already_completed', activityId: pmActivity.activityId };
+    }
+    if (isAlreadyRemindedToday_(pmActivity)) {
+      return { sent: false, reason: 'already_reminded', activityId: pmActivity.activityId };
+    }
 
-  var recipient = resolveEmailRecipient_(tester.email);
-  var subject = buildReminderSubject_(pmTask);
-  var body = buildEveningBody_(tester, pmTask, amActivity, currentDay, pmActivity);
+    var amTask = getTaskForDayAndPeriod(currentDay, TASK_PERIODS.AM);
+    var amActivity = null;
+    if (amTask) {
+      amActivity = assignTaskToTesterWithResultWithoutLock_(
+        tester.testerId,
+        amTask.taskId
+      ).activity;
+    }
 
-  MailApp.sendEmail({
-    to: recipient,
-    subject: subject,
-    body: body
+    var recipient = resolveEmailRecipient_(tester.email);
+    var subject = buildReminderSubject_(pmTask);
+    var body = buildEveningBody_(tester, pmTask, amActivity, currentDay, pmActivity);
+
+    MailApp.sendEmail({
+      to: recipient,
+      subject: subject,
+      body: body
+    });
+
+    recordReminderSentWithoutLock_(pmActivity.activityId);
+
+    return {
+      sent: true,
+      reason: 'sent',
+      activityId: pmActivity.activityId,
+      taskId: pmTask.taskId,
+      to: recipient
+    };
   });
-
-  recordReminderSent_(pmActivity.activityId);
-
-  return {
-    sent: true,
-    reason: 'sent',
-    activityId: pmActivity.activityId,
-    taskId: pmTask.taskId,
-    to: recipient
-  };
 }
 
 function buildReminderSubject_(task) {
@@ -486,6 +523,23 @@ function addTestModeNotice_(lines) {
   if (isEmailTestModeEnabled_()) {
     lines.push('');
     lines.push('[TEST MODE] This message was redirected to the configured test recipient.');
+  }
+}
+
+function runWithReminderDeliveryLocks_(action) {
+  var scriptLock = LockService.getScriptLock();
+  var documentLock = LockService.getDocumentLock();
+  scriptLock.waitLock(30000);
+
+  try {
+    documentLock.waitLock(30000);
+    try {
+      return action();
+    } finally {
+      documentLock.releaseLock();
+    }
+  } finally {
+    scriptLock.releaseLock();
   }
 }
 

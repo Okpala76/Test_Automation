@@ -7,33 +7,40 @@ function generateTesterToken() {
 }
 
 function addTester(name, email, startDate) {
-  var context = getTesterSheetContext_();
   var normalizedName = normalizeTesterName_(name);
   var normalizedEmail = normalizeTesterEmail_(email);
+  var normalizedStartDate = normalizeTesterStartDate_(startDate);
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
 
-  if (getTesterByEmail(normalizedEmail)) {
-    throw new Error('A tester with this email already exists.');
+  try {
+    var context = getTesterSheetContext_();
+    if (getTesterByEmail(normalizedEmail)) {
+      throw new Error('A tester with this email already exists.');
+    }
+
+    var testerId = generateUniqueTesterValue_(generateTesterId, getTesterById);
+    var token = generateUniqueTesterValue_(generateTesterToken, getTesterByToken);
+    var now = new Date();
+    var row = buildTesterRow_(context.headers, {
+      'Tester ID': testerId,
+      'Name': normalizedName,
+      'Email': normalizedEmail,
+      'Start Date': normalizedStartDate,
+      'Status': TESTER_STATUSES.NOT_STARTED,
+      'Token': token,
+      'Created At': now,
+      'Updated At': now
+    });
+
+    context.sheet
+      .getRange(context.sheet.getLastRow() + 1, 1, 1, context.headers.length)
+      .setValues([row]);
+
+    return testerObjectFromRow_(row, context.columnIndexes);
+  } finally {
+    lock.releaseLock();
   }
-
-  var testerId = generateUniqueTesterValue_(generateTesterId, getTesterById);
-  var token = generateUniqueTesterValue_(generateTesterToken, getTesterByToken);
-  var now = new Date();
-  var row = buildTesterRow_(context.headers, {
-    'Tester ID': testerId,
-    'Name': normalizedName,
-    'Email': normalizedEmail,
-    'Start Date': normalizeTesterStartDate_(startDate),
-    'Status': TESTER_STATUSES.NOT_STARTED,
-    'Token': token,
-    'Created At': now,
-    'Updated At': now
-  });
-
-  context.sheet
-    .getRange(context.sheet.getLastRow() + 1, 1, 1, context.headers.length)
-    .setValues([row]);
-
-  return testerObjectFromRow_(row, context.columnIndexes);
 }
 
 function getTesterById(testerId) {
@@ -67,6 +74,17 @@ function getTesterByToken(token) {
 }
 
 function updateTester(testerId, updates) {
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+
+  try {
+    return updateTesterWithoutLock_(testerId, updates);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function updateTesterWithoutLock_(testerId, updates) {
   var normalizedId = normalizeLookupValue_(testerId);
   if (!normalizedId) {
     throw new Error('A tester ID is required.');

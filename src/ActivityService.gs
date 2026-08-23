@@ -208,51 +208,58 @@ function assignTaskToTesterWithResult_(testerId, taskId) {
   lock.waitLock(30000);
 
   try {
-    var tester = getTesterById(normalizedTesterId);
-    if (!tester) {
-      throw new Error('Tester not found for the provided tester ID.');
-    }
-
-    var task = getTaskById(normalizedTaskId);
-    if (!task) {
-      throw new Error('Task not found for the provided task ID.');
-    }
-    if (!task.active) {
-      throw new Error('Inactive tasks cannot be assigned.');
-    }
-
-    var existingActivity = getActivityForTesterAndTask(normalizedTesterId, normalizedTaskId);
-    if (existingActivity) {
-      return {
-        activity: existingActivity,
-        created: false
-      };
-    }
-
-    var context = getActivityLogSheetContext_();
-    var activityId = generateUniqueActivityId_();
-    var row = buildActivityRow_(context.headers, {
-      'Activity ID': activityId,
-      'Tester ID': normalizedTesterId,
-      'Task ID': normalizedTaskId,
-      'Assigned At': new Date(),
-      'Completed At': '',
-      'Status': ACTIVITY_STATUSES.ASSIGNED,
-      'Last Reminder At': '',
-      'Reminder Count': 0
-    });
-
-    context.sheet
-      .getRange(context.sheet.getLastRow() + 1, 1, 1, context.headers.length)
-      .setValues([row]);
-
-    return {
-      activity: activityObjectFromRow_(row, context.columnIndexes),
-      created: true
-    };
+    return assignTaskToTesterWithResultWithoutLock_(
+      normalizedTesterId,
+      normalizedTaskId
+    );
   } finally {
     lock.releaseLock();
   }
+}
+
+function assignTaskToTesterWithResultWithoutLock_(testerId, taskId) {
+  var tester = getTesterById(testerId);
+  if (!tester) {
+    throw new Error('Tester not found for the provided tester ID.');
+  }
+
+  var task = getTaskById(taskId);
+  if (!task) {
+    throw new Error('Task not found for the provided task ID.');
+  }
+  if (!task.active) {
+    throw new Error('Inactive tasks cannot be assigned.');
+  }
+
+  var existingActivity = getActivityForTesterAndTask(testerId, taskId);
+  if (existingActivity) {
+    return {
+      activity: existingActivity,
+      created: false
+    };
+  }
+
+  var context = getActivityLogSheetContext_();
+  var activityId = generateUniqueActivityId_();
+  var row = buildActivityRow_(context.headers, {
+    'Activity ID': activityId,
+    'Tester ID': testerId,
+    'Task ID': taskId,
+    'Assigned At': new Date(),
+    'Completed At': '',
+    'Status': ACTIVITY_STATUSES.ASSIGNED,
+    'Last Reminder At': '',
+    'Reminder Count': 0
+  });
+
+  context.sheet
+    .getRange(context.sheet.getLastRow() + 1, 1, 1, context.headers.length)
+    .setValues([row]);
+
+  return {
+    activity: activityObjectFromRow_(row, context.columnIndexes),
+    created: true
+  };
 }
 
 function ensureActivityLogReminderColumns_() {
@@ -395,14 +402,31 @@ function normalizeReminderCount_(value) {
 }
 
 function recordReminderSent_(activityId) {
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+
+  try {
+    return recordReminderSentWithoutLock_(activityId);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function recordReminderSentWithoutLock_(activityId) {
   var match = findActivityRowById_(activityId);
   if (!match) {
     throw new Error('Activity not found for the provided Activity ID.');
   }
   var now = new Date();
-  var currentCount = normalizeReminderCount_(match.row[match.columnIndexes['Reminder Count'] - 1]);
-  match.sheet.getRange(match.rowNumber, match.columnIndexes['Last Reminder At']).setValue(now);
-  match.sheet.getRange(match.rowNumber, match.columnIndexes['Reminder Count']).setValue(currentCount + 1);
+  var currentCount = normalizeReminderCount_(
+    match.row[match.columnIndexes['Reminder Count'] - 1]
+  );
+  match.sheet
+    .getRange(match.rowNumber, match.columnIndexes['Last Reminder At'])
+    .setValue(now);
+  match.sheet
+    .getRange(match.rowNumber, match.columnIndexes['Reminder Count'])
+    .setValue(currentCount + 1);
   return getActivityById(activityId);
 }
 

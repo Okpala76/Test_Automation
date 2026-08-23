@@ -1,6 +1,6 @@
 # Tester Automation
 
-Iterations 1 through 6 establish the local Google Apps Script foundation, tester management, a 14-day task engine, automated email reminders, a tester-facing feedback Web App, and smart participation monitoring. The project remains container-bound to its target Google Spreadsheet. Final dashboard charts and escalation messaging are not included yet.
+Iterations 1 through 8B establish the local Google Apps Script foundation, tester management, a 14-day task engine, automated email reminders, a tester-facing feedback Web App, smart participation monitoring, an operational spreadsheet dashboard, production-readiness hardening, and an in-spreadsheet quick-start guide. The project remains container-bound to its target Google Spreadsheet. Escalation messaging and external analytics are not included.
 
 ## Prerequisites
 
@@ -54,8 +54,9 @@ The expected sheets are:
 - `Feedback`
 - `Dashboard`
 - `Monitoring`
+- `Guide`
 
-Run `healthCheck()` afterward. It returns and logs a structured result with `ok`, `spreadsheetName`, `requiredSheets`, and `missingSheets`. Before initialization, it reports exactly which of the five sheets are missing.
+Run `healthCheck()` afterward. It returns and logs a structured result with `ok`, `spreadsheetName`, `requiredSheets`, and `missingSheets`. Before initialization, it reports exactly which of the seven sheets are missing.
 
 ## Tester Management
 
@@ -201,6 +202,9 @@ After reloading the spreadsheet, the **Tester Automation** menu includes:
 - Email Automation → Run Morning Reminders, Run Evening Reminders, Install Reminder Triggers, Remove Reminder Triggers, Run Email Automation Smoke Test
 - Feedback → Configure Web App URL, Check Web App Configuration, Run Feedback Smoke Test, Show Deployment Instructions
 - Monitoring → Refresh Monitoring, Refresh Tester Statuses, Install Monitoring Trigger, Remove Monitoring Trigger, Run Monitoring Smoke Test
+- Dashboard → Refresh Dashboard, Show Dashboard Summary, Run Dashboard Smoke Test
+- System → Run Readiness Check, Check Configuration Health, Check Automation Triggers, Repair Automation Triggers, Run Deterministic Logic Tests, Run Full System Dry Run, Cleanup Smoke-Test Data
+- Help → Open Guide, Refresh Guide
 
 Every menu action uses a spreadsheet toast for normal results and an alert for important errors. Return values and execution logs remain available for debugging, but are not required for normal operation.
 
@@ -455,7 +459,7 @@ Use **Tester Automation → Monitoring → Refresh Monitoring**, or call:
 runMonitoringRefresh();
 ```
 
-This first refreshes all automatic tester statuses, then rebuilds the Monitoring sheet. The spreadsheet menu displays processed, changed, Active, Needs Reminder, At Risk, Completed, and failed counts in a toast or alert.
+This first refreshes all automatic tester statuses, rebuilds the Monitoring sheet, and then refreshes the Dashboard. The spreadsheet menu displays processed, changed, Active, Needs Reminder, At Risk, Completed, and failed counts in a toast or alert.
 
 ### Monitoring Trigger
 
@@ -481,6 +485,195 @@ runMonitoringSmokeTest();
 ```
 
 The test creates isolated `[Smoke Test]` testers for future start, recent participation, two-day inactivity, three-day inactivity, post-Day-14 participation, and manual Inactive scenarios. It backdates only its own smoke-test activity to verify in-period completion, checks an idempotent second refresh, preserves Inactive, and confirms a Monitoring row is generated. Existing real tester source rows are not changed; persistent smoke-test rows remain for manual review.
+
+## Spreadsheet Dashboard
+
+Iteration 7 turns the existing `Dashboard` sheet into a read-only operational view. It uses tester statuses maintained by Monitoring and derives activity and feedback metrics directly from Activity Log and Feedback. It does not calculate independent tester statuses or modify source rows.
+
+### Dashboard Functions
+
+```javascript
+getDashboardMetrics();
+refreshDashboard();
+runDashboardSmokeTest();
+```
+
+`getDashboardMetrics()` returns structured metrics without changing any sheet. `refreshDashboard()` refreshes the Monitoring view, calculates metrics, and rebuilds only the Dashboard sheet. The renderer removes old Dashboard content, merges, formatting, conditional rules, and charts before producing a stable layout.
+
+### Summary Metrics
+
+The Summary section displays:
+
+- Total Testers
+- Active
+- Needs Reminder
+- At Risk
+- Completed
+- Not Started
+- Inactive
+
+These counts use the current statuses stored by the Monitoring workflow. The Dashboard does not call `determineTesterStatus()` or maintain its own status rules.
+
+### Today Metrics
+
+All today comparisons use `Session.getScriptTimeZone()` and `yyyy-MM-dd` calendar dates:
+
+- Today's Assigned Activities: activities whose `Assigned At` date is today
+- Today's Completed Activities: completed activities whose `Completed At` date is today
+- Today's Pending Activities: activities assigned today whose status is not Completed
+- Today's Feedback Submissions: Feedback rows whose `Submitted At` date is today
+
+No elapsed-millisecond threshold is used for today calculations.
+
+### Overall Metrics
+
+The Overall section displays:
+
+- Total Activities Assigned
+- Total Activities Completed
+- Completion Rate: completed activities divided by assigned activities
+- Total Feedback Submissions
+- Total Bugs Reported
+- Average Feedback Rating
+
+Completion Rate is `0%` when no activities exist. Average rating ignores blank, non-numeric, and out-of-range values and displays `N/A` when no valid ratings exist.
+
+### Attention Required
+
+The Attention Required table includes only `At Risk` and `Needs Reminder` testers. It shows Name, Email, Current Day, Status, Last Participation, Days Since Participation, Completed Activities, and Feedback Count. `At Risk` appears first, followed by `Needs Reminder`; longer inactivity sorts first within each group. Tester tokens are never included.
+
+### Tester Progress
+
+The Tester Progress table includes every tester with Name, Current Day, Status, Completed Activities, Feedback Count, and Last Participation. Rows are sorted by tester name.
+
+### Dashboard Layout and Formatting
+
+The Dashboard contains a title and Last Updated timestamp followed by Summary, Today, Overall, Attention Required, and Tester Progress sections. It uses merged section headings, bold metric values, fixed readable column widths, percentage and date formatting, frozen top rows, and simple conditional formatting for visible status text. A chart is intentionally omitted to keep repeated refreshes stable and avoid decorative complexity.
+
+### Automatic and Manual Refresh
+
+The existing 7 PM monitoring trigger now follows this sequence:
+
+```text
+Refresh tester statuses
+Refresh Monitoring sheet
+Refresh Dashboard sheet
+```
+
+No additional dashboard trigger is installed. Manual operations are available under **Tester Automation → Dashboard**:
+
+- Refresh Dashboard
+- Show Dashboard Summary
+- Run Dashboard Smoke Test
+
+Refresh displays a toast with total testers and key status counts. Summary and smoke-test actions display spreadsheet alerts.
+
+### Dashboard Smoke Test
+
+Run **Tester Automation → Dashboard → Run Dashboard Smoke Test** or execute:
+
+```javascript
+runDashboardSmokeTest();
+```
+
+The test verifies status totals, today activity and feedback counts, overall completed activities, zero-safe completion rate, feedback totals, bug totals, average valid rating, attention-required membership, Dashboard rendering, repeated refresh stability, and an unchanged source-data fingerprint. It rebuilds Monitoring and Dashboard only; it does not create testers, activities, or feedback and does not change source statuses.
+
+## Production Readiness And Hardening
+
+Iteration 8 adds operational safety checks and a controlled end-to-end dry run without adding new tester-facing behavior. The hardening functions do not log tester tokens, personalized feedback URLs, recipient addresses, or Script Property values.
+
+### Readiness Checks
+
+Run **Tester Automation → System → Run Readiness Check**, or execute:
+
+```javascript
+runSystemReadinessCheck();
+```
+
+The check is read-only. It verifies all required sheets and headers, complete and unique active Day 1–14 AM/PM task coverage, required Web App configuration, and exactly one time-driven trigger for each managed automation handler. Its structured result separates `failures` from non-blocking `warnings`; `ok` is false only when failures exist. Email Test Mode being enabled is a warning because it deliberately prevents live tester delivery.
+
+Configuration and trigger diagnostics are also available independently:
+
+```javascript
+getSystemConfigurationHealth();
+getAutomationTriggerHealth();
+```
+
+Configuration health reports only Boolean state and the script timezone. It does not return the configured recipient or Web App URL. Trigger health reports counts and handler names without exposing trigger IDs.
+
+### Trigger Repair
+
+Run **Tester Automation → System → Repair Automation Triggers**, or execute:
+
+```javascript
+repairAutomationTriggers();
+```
+
+Repair is serialized with a script lock. It creates missing time-driven triggers, removes duplicate or wrong-type managed triggers, and preserves one valid trigger per handler. It may touch only `sendMorningReminders`, `sendEveningReminders`, and `runMonitoringRefresh`; unrelated project triggers are counted but left unchanged. Apps Script exposes installable triggers only to the account that created them, so health and repair are explicitly current-user scoped. Ensure other spreadsheet editors have not installed their own duplicate automation triggers. Apps Script also does not expose an installed time trigger's configured hour for inspection, so health verifies its handler and time-driven type while the project installers create the intended 9 AM, 6 PM, and 7 PM schedules.
+
+### Concurrency And Delivery Safety
+
+Tester creation and updates, task assignment, feedback submission, activity completion, reminder metadata changes, and smoke-data cleanup use document locks around uniqueness-sensitive writes. Trigger installation and removal use a script lock. Reminder delivery uses a script lock around the complete refresh, duplicate check, email send, and metadata-recording sequence.
+
+Reminder timestamps and counts update only after `MailApp.sendEmail` succeeds. In Test Mode, a missing or invalid test recipient fails safely; delivery never falls back to the tester's email.
+
+### Deterministic Logic Tests
+
+Run **Tester Automation → System → Run Deterministic Logic Tests**, or execute:
+
+```javascript
+runDeterministicLogicTests();
+```
+
+These tests use fixed dates and in-memory records. They verify Day 0, Day 1, Day 14, and post-plan date boundaries; status precedence and inactivity thresholds; valid and invalid feedback payloads; and Dashboard today, completion-rate, feedback, bug, and rating calculations. They do not create, update, or delete spreadsheet rows and do not send email.
+
+### Full System Dry Run
+
+The full dry run requires all three safeguards before it changes data or sends email:
+
+- Email Test Mode is enabled.
+- A valid test recipient is configured.
+- A valid Feedback Web App `/exec` URL is configured.
+
+Configure those values, then run **Tester Automation → System → Run Full System Dry Run**, or execute:
+
+```javascript
+setEmailTestMode(true);
+setTestEmailRecipient('you@example.com');
+setFeedbackWebAppUrl('https://script.google.com/macros/s/DEPLOYMENT_ID/exec');
+runFullSystemDryRun();
+```
+
+The dry run initializes missing structure, seeds missing tasks idempotently, runs deterministic checks, creates and activates one uniquely identified `[Smoke Test]` tester with an `example.invalid` email, assigns Day 1 AM, sends one reminder to the configured test recipient, verifies duplicate reminder blocking, generates a personalized feedback link without returning or logging it, submits feedback, verifies duplicate feedback blocking and activity completion, refreshes only that tester's status, and rebuilds Monitoring and Dashboard. It never invokes a batch reminder function and therefore never selects a real tester for dry-run delivery.
+
+The generated smoke rows remain for inspection. The return value contains IDs and Boolean outcomes needed for diagnostics but contains no tester token, personalized URL, or configured recipient.
+
+### Safe Smoke-Data Cleanup
+
+Run **Tester Automation → System → Cleanup Smoke-Test Data**, or execute:
+
+```javascript
+cleanupSmokeTestData();
+```
+
+The menu requires confirmation. Cleanup first validates the Testers, Activity Log, Feedback, and Monitoring headers. It then identifies testers whose names begin exactly with `[Smoke Test]` and deletes dependent rows only when the Tester ID belongs exclusively to smoke-test tester rows. Any blank or shared ambiguous Tester ID is skipped. Rows are removed from Feedback, Activity Log, Monitoring, and Testers in that order. Tasks, headers, real tester rows, and unrelated records are never deleted. Refresh Monitoring and Dashboard after cleanup if their displayed totals need to be rebuilt immediately.
+
+### Controlled Live Transition
+
+1. Keep Email Test Mode enabled while configuring the test recipient and Feedback Web App URL.
+2. Run deterministic logic tests and the full system dry run. Confirm the redirected email and manually open a fresh feedback link when browser-level deployment verification is needed.
+3. Run smoke-data cleanup, then refresh Monitoring and Dashboard.
+4. Review every real tester's email, Start Date, and Status. Only `Active`, `Needs Reminder`, and `At Risk` testers are eligible for reminders.
+5. Inspect or repair the three managed automation triggers and run the readiness check. Resolve every failure; review warnings deliberately.
+6. Disable Test Mode only when live delivery is intended:
+
+```javascript
+setEmailTestMode(false);
+getSystemConfigurationHealth();
+runSystemReadinessCheck();
+```
+
+7. Confirm configuration health reports `readyForLiveSending: true`. Re-enable Test Mode immediately if any live-run verification is incomplete.
 
 ## Local Development Workflow
 
