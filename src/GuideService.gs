@@ -25,7 +25,7 @@ function refreshGuideWithoutLock_() {
     throw new Error('The Guide sheet is missing. Run Initialize Spreadsheet first.');
   }
 
-  var requiredRows = 52;
+  var requiredRows = 74;
   var requiredColumns = 6;
   if (sheet.getMaxRows() < requiredRows) {
     sheet.insertRowsAfter(sheet.getMaxRows(), requiredRows - sheet.getMaxRows());
@@ -59,7 +59,7 @@ function refreshGuideWithoutLock_() {
   writeGuideParagraph_(
     sheet,
     5,
-    'Coordinates tester enrollment, daily activities, reminder emails, feedback, participation monitoring, and progress reporting in one place.'
+    'Coordinates tester enrollment, daily activities, independent email and WhatsApp reminders, feedback, participation monitoring, and progress reporting in one place.'
   );
 
   writeGuideSection_(sheet, 7, 'THE 14-DAY TESTING SYSTEM');
@@ -84,33 +84,63 @@ function refreshGuideWithoutLock_() {
     'Important: Do not activate testers until the actual testing start date is confirmed.'
   );
 
-  writeGuideSection_(sheet, 19, 'SHEETS AT A GLANCE');
-  writeGuideTableHeader_(sheet, 20, 'Sheet', 'Purpose');
-  sheet.getRange(21, 1, 7, 2).setValues([
+  writeGuideSection_(sheet, 19, 'ADDING A FRESH TESTER DURING A LIVE TEST');
+  writeGuideTableHeader_(sheet, 20, 'Step', 'Action');
+  sheet.getRange(21, 1, 8, 2).setValues([
+    ['1', "Add the tester's Google account email to Play Console."],
+    ['2', 'Have them opt in and install the app.'],
+    ['3', 'Add Name + Email to a blank Testers row.'],
+    ['4', 'Run Testers > Import New Testers.'],
+    ['5', "Click any cell on that tester's row."],
+    ['6', 'Run Testers > Activate Selected Tester.'],
+    ['7', 'Enter their real start date.'],
+    ['8', 'Their Day 1-14 timeline now runs independently.']
+  ]);
+
+  writeGuideSection_(sheet, 30, 'WHATSAPP REMINDERS');
+  writeGuideParagraph_(
+    sheet,
+    31,
+    'Email remains the primary reminder channel. WhatsApp is optional and is attempted independently, so a WhatsApp failure does not stop email reminders.'
+  );
+  writeGuideParagraph_(
+    sheet,
+    33,
+    'A tester receives WhatsApp only when Phone is configured in international format and WhatsApp Enabled is TRUE. Missing phones and disabled testers are skipped.'
+  );
+  writeGuideParagraph_(
+    sheet,
+    35,
+    'Use Tester Automation > WhatsApp to configure Evolution API, set the test recipient, enable Test Mode, check configuration, and send a harmless test message.'
+  );
+
+  writeGuideSection_(sheet, 38, 'SHEETS AT A GLANCE');
+  writeGuideTableHeader_(sheet, 39, 'Sheet', 'Purpose');
+  sheet.getRange(40, 1, 7, 2).setValues([
     ['Testers', 'Tester details, start dates, and current participation status.'],
     ['Tasks', 'The Day 1-14 morning and evening testing plan.'],
-    ['Activity Log', 'Assigned activities, completion, and reminder history.'],
+    ['Activity Log', 'Assigned activities, completion, and separate email/WhatsApp reminder history.'],
     ['Feedback', 'Tester ratings, completion answers, bug flags, and comments.'],
     ['Monitoring', 'Calculated participation details used for operational follow-up.'],
     ['Dashboard', 'A summarized view of status, activity, feedback, and progress.'],
     ['Guide', 'This quick-start reference for spreadsheet operators.']
   ]);
 
-  writeGuideSection_(sheet, 29, 'BASIC OPERATING FLOW');
-  writeGuideTableHeader_(sheet, 30, 'Step', 'Action');
-  sheet.getRange(31, 1, 7, 2).setValues([
+  writeGuideSection_(sheet, 48, 'BASIC OPERATING FLOW');
+  writeGuideTableHeader_(sheet, 49, 'Step', 'Action');
+  sheet.getRange(50, 1, 7, 2).setValues([
     ['1', 'Paste Name and Google Play email, then import the tester.'],
-    ['2', 'Activate Not Started testers with the confirmed common Start Date.'],
+    ['2', 'Activate one selected tester or all Not Started testers with confirmed Start Dates.'],
     ['3', 'The system assigns the appropriate daily tasks.'],
-    ['4', 'Morning and evening reminders are sent for current tasks.'],
+    ['4', 'Morning and evening email and optional WhatsApp reminders are attempted independently.'],
     ['5', 'The tester submits feedback through the feedback form.'],
     ['6', 'Monitoring calculates participation status from activity and feedback.'],
     ['7', 'Dashboard summarizes overall progress and attention required.']
   ]);
 
-  writeGuideSection_(sheet, 39, 'STATUS MEANINGS');
-  writeGuideTableHeader_(sheet, 40, 'Status', 'Meaning');
-  sheet.getRange(41, 1, 6, 2).setValues([
+  writeGuideSection_(sheet, 58, 'STATUS MEANINGS');
+  writeGuideTableHeader_(sheet, 59, 'Status', 'Meaning');
+  sheet.getRange(60, 1, 6, 2).setValues([
     [TESTER_STATUSES.NOT_STARTED, 'Testing has not begun or the Start Date is in the future.'],
     [TESTER_STATUSES.ACTIVE, 'The tester is participating recently or is in the initial grace period.'],
     [TESTER_STATUSES.NEEDS_REMINDER, 'No meaningful participation has been recorded for 2 days.'],
@@ -119,22 +149,27 @@ function refreshGuideWithoutLock_() {
     [TESTER_STATUSES.INACTIVE, 'The tester was manually excluded from automation.']
   ]);
 
-  writeGuideSection_(sheet, 48, 'TEST MODE AND MANUAL CONTROLS');
+  writeGuideSection_(sheet, 67, 'TEST MODE AND MANUAL CONTROLS');
   writeGuideParagraph_(
     sheet,
-    49,
-    'Test Mode redirects reminder emails to the configured test recipient. Do not disable Test Mode until real tester email addresses should receive messages.'
+    68,
+    'Email and WhatsApp have separate Test Modes and separate test recipients. WhatsApp Test Mode never falls back to a real tester phone.'
   );
   writeGuideParagraph_(
     sheet,
-    51,
+    70,
+    'Before live WhatsApp delivery, run Check WhatsApp Configuration and Send WhatsApp Test Message while WhatsApp Test Mode is enabled.'
+  );
+  writeGuideParagraph_(
+    sheet,
+    72,
     'Run initialization, reminders, monitoring, dashboard refreshes, readiness checks, and other manual controls from the Tester Automation menu.'
   );
 
   formatGuide_(sheet);
   return {
     sheetName: GUIDE_SHEET_NAME,
-    sectionCount: 7
+    sectionCount: 9
   };
 }
 
@@ -171,14 +206,14 @@ function formatGuide_(sheet) {
     .setHorizontalAlignment('center');
   sheet.setRowHeight(1, 36);
 
-  [4, 7, 10, 19, 29, 39, 48].forEach(function (row) {
+  [4, 7, 10, 19, 30, 38, 48, 58, 67].forEach(function (row) {
     sheet
       .getRange(row, 1, 1, 6)
       .setBackground(sectionGreen)
       .setFontColor('#17382b')
       .setFontWeight('bold');
   });
-  [11, 20, 30, 40].forEach(function (row) {
+  [11, 20, 39, 49, 59].forEach(function (row) {
     sheet
       .getRange(row, 1, 1, 6)
       .setBackground(headerFill)
@@ -188,21 +223,25 @@ function formatGuide_(sheet) {
   sheet.getRange(11, 1, 6, 6).setBorder(
     true, true, true, true, true, true, border, SpreadsheetApp.BorderStyle.SOLID
   );
-  sheet.getRange(20, 1, 8, 6).setBorder(
+  sheet.getRange(20, 1, 9, 6).setBorder(
     true, true, true, true, true, true, border, SpreadsheetApp.BorderStyle.SOLID
   );
-  sheet.getRange(30, 1, 8, 6).setBorder(
+  sheet.getRange(39, 1, 8, 6).setBorder(
     true, true, true, true, true, true, border, SpreadsheetApp.BorderStyle.SOLID
   );
-  sheet.getRange(40, 1, 7, 6).setBorder(
+  sheet.getRange(49, 1, 8, 6).setBorder(
+    true, true, true, true, true, true, border, SpreadsheetApp.BorderStyle.SOLID
+  );
+  sheet.getRange(59, 1, 7, 6).setBorder(
     true, true, true, true, true, true, border, SpreadsheetApp.BorderStyle.SOLID
   );
 
   [
     { startRow: 12, rowCount: 5 },
-    { startRow: 21, rowCount: 7 },
-    { startRow: 31, rowCount: 7 },
-    { startRow: 41, rowCount: 6 }
+    { startRow: 21, rowCount: 8 },
+    { startRow: 40, rowCount: 7 },
+    { startRow: 50, rowCount: 7 },
+    { startRow: 60, rowCount: 6 }
   ].forEach(function (table) {
     for (var row = table.startRow; row < table.startRow + table.rowCount; row += 1) {
       sheet.getRange(row, 2, 1, 5).merge();
@@ -212,25 +251,30 @@ function formatGuide_(sheet) {
   sheet.getRange(1, 1, requiredGuideLastRow_(), 6).setWrap(true);
   sheet.getRange(1, 1, requiredGuideLastRow_(), 6).setVerticalAlignment('middle');
   sheet.getRange('A17:F17').setBackground('#fff2cc').setFontWeight('bold');
-  sheet.getRange('A49:F49').setBackground('#fff2cc').setFontWeight('bold');
+  sheet.getRange('A68:F68').setBackground('#fff2cc').setFontWeight('bold');
   sheet.setColumnWidth(1, 175);
   [2, 3, 4, 5, 6].forEach(function (column) {
     sheet.setColumnWidth(column, 125);
   });
   sheet.setRowHeights(12, 5, 50);
-  sheet.setRowHeights(21, 7, 34);
-  sheet.setRowHeights(31, 7, 34);
-  sheet.setRowHeights(41, 6, 38);
+  sheet.setRowHeights(21, 8, 42);
+  sheet.setRowHeights(40, 7, 38);
+  sheet.setRowHeights(50, 7, 42);
+  sheet.setRowHeights(60, 6, 38);
   sheet.setRowHeight(5, 42);
   sheet.setRowHeight(8, 46);
   sheet.setRowHeight(14, 62);
   sheet.setRowHeight(15, 70);
   sheet.setRowHeight(17, 42);
-  sheet.setRowHeight(49, 50);
-  sheet.setRowHeight(51, 44);
+  sheet.setRowHeight(31, 50);
+  sheet.setRowHeight(33, 50);
+  sheet.setRowHeight(35, 50);
+  sheet.setRowHeight(68, 50);
+  sheet.setRowHeight(70, 50);
+  sheet.setRowHeight(72, 44);
   sheet.setFrozenRows(2);
 }
 
 function requiredGuideLastRow_() {
-  return 52;
+  return 74;
 }

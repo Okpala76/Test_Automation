@@ -151,6 +151,12 @@ function runSystemReadinessCheck() {
     addReadinessResult_(report, 'Configuration', 'pass', 'Required configuration is ready.');
   }
 
+  if (sheetInspection.validSheets[TESTER_SHEET_NAME]) {
+    inspectWhatsAppReadiness_().forEach(function (result) {
+      addReadinessResult_(report, result.name, result.status, result.message);
+    });
+  }
+
   try {
     var triggerHealth = getAutomationTriggerHealth();
     triggerHealth.handlers.forEach(function (handler) {
@@ -397,6 +403,51 @@ function runDeterministicLogicTests() {
   }
   assertHardeningTest_(invalidFeedbackRejected, 'Invalid feedback rating was accepted.');
 
+  assertHardeningTest_(
+    normalizeWhatsAppPhone('+234 801 234 5678') === '2348012345678',
+    'WhatsApp phone normalization failed.'
+  );
+  var localPhoneRejected = false;
+  try {
+    normalizeWhatsAppPhone('08012345678');
+  } catch (error) {
+    localPhoneRejected = true;
+  }
+  assertHardeningTest_(localPhoneRejected, 'A local-format WhatsApp phone was accepted.');
+  assertHardeningTest_(
+    normalizeWhatsAppEnabled_('TRUE') && !normalizeWhatsAppEnabled_('false'),
+    'WhatsApp Enabled normalization failed.'
+  );
+  assertHardeningTest_(
+    resolveWhatsAppRecipientForMode_(
+      '447700900001',
+      true,
+      '2348012345678'
+    ) === '2348012345678',
+    'WhatsApp Test Mode did not redirect to the test recipient.'
+  );
+  var missingTestRecipientRejected = false;
+  try {
+    resolveWhatsAppRecipientForMode_('447700900001', true, '');
+  } catch (error) {
+    missingTestRecipientRejected = true;
+  }
+  assertHardeningTest_(
+    missingTestRecipientRejected,
+    'WhatsApp Test Mode fell back when its test recipient was missing.'
+  );
+  assertHardeningTest_(
+    evolutionResponseConfirmsSend_({ key: { id: 'message-id' } }) &&
+      !evolutionResponseConfirmsSend_({}) &&
+      evolutionResponseIndicatesFailure_({ success: false }),
+    'Evolution response confirmation checks failed.'
+  );
+  assertHardeningTest_(
+    isAlreadyWhatsAppReminded_({ whatsappReminderCount: 1 }) &&
+      !isAlreadyWhatsAppReminded_({ whatsappReminderCount: 0 }),
+    'WhatsApp duplicate protection checks failed.'
+  );
+
   var currentDate = new Date(Date.UTC(2026, 0, 10, 12));
   var aggregate = calculateDashboardAggregateMetrics_(
     [
@@ -444,6 +495,7 @@ function runDeterministicLogicTests() {
     dateScenarios: 4,
     statusScenarios: statusScenarios.length,
     feedbackScenarios: 2,
+    whatsAppScenarios: 7,
     dashboardScenarios: 2
   };
 }
@@ -588,11 +640,22 @@ function inspectRequiredSheetStructure_() {
       return;
     }
 
-    var actualHeaders = sheet
-      .getRange(1, 1, 1, expectedHeaders.length)
-      .getValues()[0];
+    var useHeaderLookup =
+      sheetName === TESTER_SHEET_NAME || sheetName === ACTIVITY_LOG_SHEET_NAME;
+    var headerWidth = useHeaderLookup ? sheet.getLastColumn() : expectedHeaders.length;
+    var actualHeaders = headerWidth === 0
+      ? []
+      : sheet
+          .getRange(1, 1, 1, headerWidth)
+          .getValues()[0]
+          .map(function (header) { return String(header).trim(); });
     var mismatches = expectedHeaders.filter(function (header, index) {
-      return actualHeaders[index] !== header;
+      if (!useHeaderLookup) {
+        return actualHeaders[index] !== header;
+      }
+      return actualHeaders.filter(function (candidate) {
+        return candidate === header;
+      }).length !== 1;
     });
     validSheets[sheetName] = mismatches.length === 0;
     results.push({
@@ -665,6 +728,102 @@ function inspectDefaultTaskCoverage_() {
   ];
 }
 
+function inspectWhatsAppReadiness_() {
+  var context = getTesterSheetContext_();
+  var lastRow = context.sheet.getLastRow();
+  var rows = lastRow <= 1
+    ? []
+    : context.sheet.getRange(2, 1, lastRow - 1, context.headers.length).getValues();
+  var enabledCount = 0;
+  var dataIssues = [];
+  rows.forEach(function (row, index) {
+    if (!normalizeLookupValue_(row[context.columnIndexes['Tester ID'] - 1])) {
+      return;
+    }
+    var enabled;
+    try {
+      enabled = normalizeWhatsAppEnabled_(
+        row[context.columnIndexes['WhatsApp Enabled'] - 1]
+      );
+    } catch (error) {
+      dataIssues.push('Testers row ' + (index + 2) + ' has an invalid WhatsApp Enabled value.');
+      return;
+    }
+    if (!enabled) {
+      return;
+    }
+    enabledCount += 1;
+    try {
+      if (!normalizeWhatsAppPhone(row[context.columnIndexes['Phone'] - 1])) {
+        throw new Error('missing');
+      }
+    } catch (error) {
+      dataIssues.push('Testers row ' + (index + 2) + ' has WhatsApp enabled without a valid phone.');
+    }
+  });
+  var configuration = getWhatsAppConfigurationStatus_();
+  var required = [
+    { configured: configuration.apiUrlConfigured, label: 'Evolution API URL' },
+    { configured: configuration.apiKeyConfigured, label: 'Evolution API key' },
+    { configured: configuration.instanceConfigured, label: 'Evolution instance' }
+  ];
+  var results = [];
+
+  if (dataIssues.length === 0) {
+    results.push({
+      name: 'WhatsApp tester data',
+      status: 'pass',
+      message: 'WhatsApp tester phone and opt-in values are valid.'
+    });
+  } else {
+    dataIssues.forEach(function (message) {
+      results.push({
+        name: 'WhatsApp tester data',
+        status: 'fail',
+        message: message
+      });
+    });
+  }
+
+  required.forEach(function (item) {
+    if (item.configured) {
+      results.push({
+        name: 'WhatsApp: ' + item.label,
+        status: 'pass',
+        message: item.label + ' is configured.'
+      });
+      return;
+    }
+    results.push({
+      name: 'WhatsApp: ' + item.label,
+      status: enabledCount > 0 ? 'fail' : 'warning',
+      message: item.label + ' is not configured' +
+        (enabledCount > 0
+          ? ' but at least one tester has WhatsApp enabled.'
+          : '; no tester currently has WhatsApp enabled.')
+    });
+  });
+
+  if (configuration.testMode) {
+    results.push({
+      name: 'WhatsApp Test Mode recipient',
+      status: configuration.testRecipientConfigured && configuration.testRecipientValid
+        ? 'pass'
+        : 'fail',
+      message: configuration.testRecipientConfigured && configuration.testRecipientValid
+        ? 'WhatsApp Test Mode has a valid test recipient.'
+        : 'WhatsApp Test Mode is enabled but no valid test recipient is configured.'
+    });
+  } else {
+    results.push({
+      name: 'WhatsApp Test Mode',
+      status: 'pass',
+      message: 'WhatsApp Test Mode is OFF.'
+    });
+  }
+  return results;
+}
+
 function addReadinessResult_(report, name, status, message) {
   var check = {
     name: name,
@@ -683,14 +842,24 @@ function validateCleanupSheetHeaders_(sheet, sheetName) {
   if (!sheet) {
     throw new Error('The ' + sheetName + ' sheet is missing. Nothing was deleted.');
   }
-  var headers = REQUIRED_SHEET_HEADERS[sheetName];
-  var actual = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  headers.forEach(function (header, index) {
-    if (actual[index] !== header) {
+  var requiredHeaders = REQUIRED_SHEET_HEADERS[sheetName];
+  var useHeaderLookup =
+    sheetName === TESTER_SHEET_NAME || sheetName === ACTIVITY_LOG_SHEET_NAME;
+  var width = useHeaderLookup ? sheet.getLastColumn() : requiredHeaders.length;
+  var actual = width === 0
+    ? []
+    : sheet.getRange(1, 1, 1, width).getValues()[0].map(function (header) {
+        return String(header).trim();
+      });
+  requiredHeaders.forEach(function (header, index) {
+    var valid = useHeaderLookup
+      ? actual.filter(function (candidate) { return candidate === header; }).length === 1
+      : actual[index] === header;
+    if (!valid) {
       throw new Error('The ' + sheetName + ' headers are invalid. Nothing was deleted.');
     }
   });
-  return headers;
+  return useHeaderLookup ? actual : requiredHeaders;
 }
 
 function deleteCleanupRowsByTesterId_(sheet, sheetName, eligibleIds) {

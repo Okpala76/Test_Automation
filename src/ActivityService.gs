@@ -249,7 +249,9 @@ function assignTaskToTesterWithResultWithoutLock_(testerId, taskId) {
     'Completed At': '',
     'Status': ACTIVITY_STATUSES.ASSIGNED,
     'Last Reminder At': '',
-    'Reminder Count': 0
+    'Reminder Count': 0,
+    'Last WhatsApp Reminder At': '',
+    'WhatsApp Reminder Count': 0
   });
 
   context.sheet
@@ -289,37 +291,30 @@ function ensureActivityLogReminderColumns_() {
 function getActivityLogSheetContext_() {
   ensureActivityLogReminderColumns_();
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ACTIVITY_LOG_SHEET_NAME);
-  var headers = REQUIRED_SHEET_HEADERS[ACTIVITY_LOG_SHEET_NAME];
+  var requiredHeaders = REQUIRED_SHEET_HEADERS[ACTIVITY_LOG_SHEET_NAME];
 
   if (!sheet) {
     throw new Error('The Activity Log sheet is missing. Run initializeSpreadsheet() first.');
   }
 
   var lastCol = sheet.getLastColumn();
-  if (lastCol < headers.length) {
-    // After migration, headers should be present; if still short, treat as invalid.
-    var sheetHeaders = lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [];
-    headers.forEach(function (header, index) {
-      if (String(sheetHeaders[index] || '').trim() !== header) {
-        throw new Error(
-          'The Activity Log headers are invalid. Run initializeSpreadsheet() on an empty sheet or restore the required headers.'
-        );
-      }
-    });
-  } else {
-    var sheetHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-    headers.forEach(function (header, index) {
-      if (sheetHeaders[index] !== header) {
-        throw new Error(
-          'The Activity Log headers are invalid. Run initializeSpreadsheet() on an empty sheet or restore the required headers.'
-        );
-      }
-    });
+  if (lastCol === 0) {
+    throw new Error('The Activity Log headers are invalid. Run initializeSpreadsheet() first.');
   }
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (header) {
+    return String(header).trim();
+  });
+  requiredHeaders.forEach(function (header) {
+    if (headers.filter(function (candidate) { return candidate === header; }).length !== 1) {
+      throw new Error(
+        'The Activity Log headers are invalid. Run initializeSpreadsheet() or restore the required headers.'
+      );
+    }
+  });
 
   var columnIndexes = {};
-  headers.forEach(function (header, index) {
-    columnIndexes[header] = index + 1;
+  requiredHeaders.forEach(function (header) {
+    columnIndexes[header] = headers.indexOf(header) + 1;
   });
 
   return {
@@ -376,7 +371,9 @@ function findActivityRowById_(activityId) {
 
 function buildActivityRow_(headers, valuesByHeader) {
   return headers.map(function (header) {
-    return valuesByHeader[header];
+    return Object.prototype.hasOwnProperty.call(valuesByHeader, header)
+      ? valuesByHeader[header]
+      : '';
   });
 }
 
@@ -389,7 +386,11 @@ function activityObjectFromRow_(row, columnIndexes) {
     completedAt: row[columnIndexes['Completed At'] - 1],
     status: row[columnIndexes['Status'] - 1],
     lastReminderAt: row[columnIndexes['Last Reminder At'] - 1],
-    reminderCount: normalizeReminderCount_(row[columnIndexes['Reminder Count'] - 1])
+    reminderCount: normalizeReminderCount_(row[columnIndexes['Reminder Count'] - 1]),
+    lastWhatsAppReminderAt: row[columnIndexes['Last WhatsApp Reminder At'] - 1],
+    whatsappReminderCount: normalizeReminderCount_(
+      row[columnIndexes['WhatsApp Reminder Count'] - 1]
+    )
   };
 }
 
@@ -443,6 +444,41 @@ function isAlreadyRemindedToday_(activity) {
   var todayStr = Utilities.formatDate(new Date(), tz, 'yyyy-MM-dd');
   var lastStr = Utilities.formatDate(lastDate, tz, 'yyyy-MM-dd');
   return todayStr === lastStr;
+}
+
+function recordWhatsAppReminderSent_(activityId) {
+  var lock = LockService.getDocumentLock();
+  lock.waitLock(30000);
+  try {
+    return recordWhatsAppReminderSentWithoutLock_(activityId);
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function recordWhatsAppReminderSentWithoutLock_(activityId) {
+  var match = findActivityRowById_(activityId);
+  if (!match) {
+    throw new Error('Activity not found for the provided Activity ID.');
+  }
+  var currentCount = normalizeReminderCount_(
+    match.row[match.columnIndexes['WhatsApp Reminder Count'] - 1]
+  );
+  var timestampColumn = match.columnIndexes['Last WhatsApp Reminder At'];
+  var countColumn = match.columnIndexes['WhatsApp Reminder Count'];
+  if (countColumn === timestampColumn + 1) {
+    match.sheet
+      .getRange(match.rowNumber, timestampColumn, 1, 2)
+      .setValues([[new Date(), currentCount + 1]]);
+  } else {
+    match.sheet.getRange(match.rowNumber, timestampColumn).setValue(new Date());
+    match.sheet.getRange(match.rowNumber, countColumn).setValue(currentCount + 1);
+  }
+  return getActivityById(activityId);
+}
+
+function isAlreadyWhatsAppReminded_(activity) {
+  return normalizeReminderCount_(activity && activity.whatsappReminderCount) > 0;
 }
 
 function generateUniqueActivityId_() {

@@ -635,37 +635,7 @@ function getAllDashboardFeedback_() {
 }
 
 function getAllDashboardActivities_() {
-  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(ACTIVITY_LOG_SHEET_NAME);
-  var headers = REQUIRED_SHEET_HEADERS[ACTIVITY_LOG_SHEET_NAME];
-  if (!sheet) {
-    throw new Error('The Activity Log sheet is missing. Run initializeSpreadsheet() first.');
-  }
-
-  var actualHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  headers.forEach(function (header, index) {
-    if (actualHeaders[index] !== header) {
-      throw new Error('The Activity Log headers are invalid. Restore the required headers.');
-    }
-  });
-
-  var columnIndexes = {};
-  headers.forEach(function (header, index) {
-    columnIndexes[header] = index + 1;
-  });
-  var lastRow = sheet.getLastRow();
-  if (lastRow <= 1) {
-    return [];
-  }
-
-  return sheet
-    .getRange(2, 1, lastRow - 1, headers.length)
-    .getValues()
-    .filter(function (row) {
-      return normalizeActivityLookupValue_(row[columnIndexes['Activity ID'] - 1]) !== '';
-    })
-    .map(function (row) {
-      return activityObjectFromRow_(row, columnIndexes);
-    });
+  return getAllActivities_();
 }
 
 function sortDashboardAttention_(first, second) {

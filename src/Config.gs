@@ -7,7 +7,9 @@ var REQUIRED_SHEET_HEADERS = {
     'Status',
     'Token',
     'Created At',
-    'Updated At'
+    'Updated At',
+    'Phone',
+    'WhatsApp Enabled'
   ],
   'Tasks': [
     'Task ID',
@@ -25,7 +27,9 @@ var REQUIRED_SHEET_HEADERS = {
     'Completed At',
     'Status',
     'Last Reminder At',
-    'Reminder Count'
+    'Reminder Count',
+    'Last WhatsApp Reminder At',
+    'WhatsApp Reminder Count'
   ],
   'Feedback': [
     'Feedback ID',
@@ -68,7 +72,9 @@ var TESTER_EDITABLE_FIELDS = {
   name: 'Name',
   email: 'Email',
   startDate: 'Start Date',
-  status: 'Status'
+  status: 'Status',
+  phone: 'Phone',
+  whatsappEnabled: 'WhatsApp Enabled'
 };
 
 var TASK_SHEET_NAME = 'Tasks';
@@ -89,6 +95,11 @@ var ACTIVITY_STATUSES = {
 
 var EMAIL_TEST_MODE_PROPERTY = 'EMAIL_TEST_MODE';
 var TEST_EMAIL_RECIPIENT_PROPERTY = 'TEST_EMAIL_RECIPIENT';
+var EVOLUTION_API_URL_PROPERTY = 'EVOLUTION_API_URL';
+var EVOLUTION_API_KEY_PROPERTY = 'EVOLUTION_API_KEY';
+var EVOLUTION_INSTANCE_PROPERTY = 'EVOLUTION_INSTANCE';
+var WHATSAPP_TEST_MODE_PROPERTY = 'WHATSAPP_TEST_MODE';
+var WHATSAPP_TEST_RECIPIENT_PROPERTY = 'WHATSAPP_TEST_RECIPIENT';
 var FEEDBACK_WEB_APP_URL_PROPERTY = 'FEEDBACK_WEB_APP_URL';
 var FEEDBACK_SHEET_NAME = 'Feedback';
 var FEEDBACK_COMMENT_MAX_LENGTH = 2000;

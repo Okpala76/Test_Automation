@@ -1,6 +1,6 @@
 # Tester Automation
 
-Iterations 1 through 8B establish the local Google Apps Script foundation, tester management, a 14-day task engine, automated email reminders, a tester-facing feedback Web App, smart participation monitoring, an operational spreadsheet dashboard, production-readiness hardening, and an in-spreadsheet quick-start guide. The project remains container-bound to its target Google Spreadsheet. Escalation messaging and external analytics are not included.
+Iterations 1 through 8D establish the Google Apps Script foundation, tester management, a 14-day task engine, independent email and optional WhatsApp reminders, a tester-facing feedback Web App, smart participation monitoring, an operational spreadsheet dashboard, production-readiness hardening, an in-spreadsheet quick-start guide, and selected-tester activation for live onboarding. The project remains container-bound to its target Google Spreadsheet. WhatsApp delivery is the only external messaging integration; escalation messaging and external analytics are not included.
 
 ## Prerequisites
 
@@ -42,7 +42,7 @@ The project deliberately keeps `appsscript.json` at the repository root and Apps
 
 ## Initialize And Check The Spreadsheet
 
-After pushing, run `initializeSpreadsheet()` from the Apps Script editor. It uses `SpreadsheetApp.getActiveSpreadsheet()` to access the spreadsheet containing this container-bound script. It creates any missing sheets and adds headers only to completely empty sheets. It can be run repeatedly without creating duplicate sheets or headers, deleting data, or overwriting entered data.
+After pushing, run `initializeSpreadsheet()` from the Apps Script editor. It uses `SpreadsheetApp.getActiveSpreadsheet()` to access the spreadsheet containing this container-bound script. It creates any missing sheets and adds headers to empty sheets. For existing sheets, schema migrations append the missing Iteration 8D columns without reordering columns or overwriting entered data. Initialization is idempotent and does not regenerate tester IDs or tokens or alter tester dates and statuses.
 
 Google will ask you to authorize the script the first time it accesses Google Sheets. Review and complete that authorization in the Apps Script editor.
 
@@ -60,7 +60,7 @@ Run `healthCheck()` afterward. It returns and logs a structured result with `ok`
 
 ## Tester Management
 
-Iteration 2 manages testers only. All functions use the bound spreadsheet through `SpreadsheetApp.getActiveSpreadsheet()`.
+Tester management uses the bound spreadsheet through `SpreadsheetApp.getActiveSpreadsheet()`. Iteration 8D adds optional WhatsApp contact data and a selected-row activation workflow without changing existing tester identity or scheduling behavior.
 
 ### Testers Sheet
 
@@ -76,6 +76,16 @@ The `Testers` sheet must retain these headers in this order:
 | Token | A private random identifier reserved for future personalized links. |
 | Created At | Creation timestamp. |
 | Updated At | Timestamp refreshed by every tester update. |
+| Phone | Optional normalized international WhatsApp number. |
+| WhatsApp Enabled | Boolean opt-in for WhatsApp reminders. |
+
+`initializeSpreadsheet()` appends `Phone` and `WhatsApp Enabled` when they are missing. Existing rows remain valid and WhatsApp remains disabled unless a row has both an eligible phone and `WhatsApp Enabled = TRUE`.
+
+### Phone Format And WhatsApp Eligibility
+
+Store phone numbers in E.164-style international form as 7 to 15 digits without the leading `+`, spaces, hyphens, or parentheses. Common formatting characters are removed during normalization, but the result must contain only digits and meet the length requirement. The automation never guesses or inserts a country code, so operators must convert local-format numbers to the correct international number before saving them.
+
+WhatsApp is optional. A tester is considered for WhatsApp only when `Phone` is present, the normalized number is valid, `WhatsApp Enabled` is true, the tester has an eligible status, and the current activity is otherwise reminder-eligible. A missing or invalid phone and a false or blank opt-in skip WhatsApp without changing email eligibility.
 
 ### Add And Find Testers
 
@@ -112,11 +122,13 @@ updateTester('TESTER_ID', {
   name: 'John Smith',
   email: 'john.smith@example.com',
   startDate: '2026-08-21',
-  status: TESTER_STATUSES.ACTIVE
+  status: TESTER_STATUSES.ACTIVE,
+  phone: '+234 801 234 5678',
+  whatsappEnabled: true
 });
 ```
 
-`Tester ID`, `Token`, and `Created At` cannot be changed. Email changes are validated and checked for duplicates. Every update refreshes `Updated At`; no status is calculated automatically.
+`Tester ID`, `Token`, and `Created At` cannot be changed. Email changes are validated and checked for duplicates; phone changes are normalized and validated. Every update refreshes `Updated At`; no status is calculated automatically.
 
 To activate a tester manually, run:
 
@@ -125,6 +137,18 @@ activateTester('TESTER_ID', '2026-08-21');
 ```
 
 When the second argument is omitted or blank, `activateTester` uses the current date.
+
+### Activate Selected Tester
+
+Use **Tester Automation > Testers > Activate Selected Tester** to onboard one imported tester while a live test is already in progress:
+
+1. Open `Testers` and select any single cell on the intended tester's row.
+2. Choose **Tester Automation > Testers > Activate Selected Tester**.
+3. Enter the tester's actual Day 1 date in `YYYY-MM-DD` format.
+4. Review the displayed name, email, and start date, then confirm.
+5. Confirm the success toast and verify that only the selected row now has the intended Start Date and `Active` status.
+
+The action accepts exactly one non-header row on `Testers`. The row must already have a Tester ID and be `Not Started`. It reuses `activateTester()`, does not regenerate identity fields, does not modify Activity Log, does not send an immediate reminder, and does not activate or otherwise alter another tester.
 
 ### Smoke Test
 
@@ -165,7 +189,7 @@ Run `seedDefaultTasks()` once to add missing default Day/Period tasks. It is ide
 
 ### Assignments And Activities
 
-The `Activity Log` records each assignment with an Activity ID, Tester ID, Task ID, Assigned At, Completed At, Status, Last Reminder At, and Reminder Count. Iteration 4 added `Last Reminder At` and `Reminder Count` to track reminder delivery without destroying existing data — existing sheets are migrated idempotently by appending the two new columns. Supported activity statuses are:
+The `Activity Log` records each assignment with an Activity ID, Tester ID, Task ID, Assigned At, Completed At, Status, Last Reminder At, Reminder Count, Last WhatsApp Reminder At, and WhatsApp Reminder Count. `Last Reminder At` and `Reminder Count` remain the email channel fields. Iteration 8D appends the two WhatsApp fields idempotently; old rows remain valid and new WhatsApp counts begin at zero. Supported activity statuses are:
 
 - `Assigned`
 - `Completed`
@@ -199,7 +223,9 @@ After reloading the spreadsheet, the **Tester Automation** menu includes:
 - Seed Default Tasks
 - Assign Today's Tasks for Active Testers
 - Run Task Engine Smoke Test
+- Testers → Import New Testers, Activate Selected Tester
 - Email Automation → Run Morning Reminders, Run Evening Reminders, Install Reminder Triggers, Remove Reminder Triggers, Run Email Automation Smoke Test
+- WhatsApp → Configure Evolution API, Configure Test Recipient, Enable WhatsApp Test Mode, Disable WhatsApp Test Mode, Check WhatsApp Configuration, Send WhatsApp Test Message
 - Feedback → Configure Web App URL, Check Web App Configuration, Run Feedback Smoke Test, Show Deployment Instructions
 - Monitoring → Refresh Monitoring, Refresh Tester Statuses, Install Monitoring Trigger, Remove Monitoring Trigger, Run Monitoring Smoke Test
 - Dashboard → Refresh Dashboard, Show Dashboard Summary, Run Dashboard Smoke Test
@@ -220,7 +246,7 @@ Iteration 4 automatically reminds eligible testers about their current Day 1–1
 
 ### Activity Log Reminder Tracking
 
-The two new columns prevent repeated emails when a function is run twice or a trigger retries. `Last Reminder At` records when the last reminder was sent for that Tester/Task pair, and `Reminder Count` increments each time. `initializeSpreadsheet()` and `ensureActivityLogReminderColumns_()` append these headers idempotently without reordering existing data.
+The email fields prevent repeated emails when a function is run twice or a trigger retries. `Last Reminder At` records when the last email reminder was sent for that Tester/Task pair, and `Reminder Count` increments after each successful email. The separate WhatsApp fields are not consulted or changed by email duplicate checks.
 
 ### Test Mode
 
@@ -285,7 +311,7 @@ runEveningReminderTest();
 - Only active tasks are assigned and reminded.
 - Already completed activities are skipped (`reason: "already_completed"`).
 - Already reminded activities for the same calendar day (script timezone) are skipped (`reason: "already_reminded"`), so running a reminder twice or a trigger retry does not send duplicate period emails.
-- One failing tester/email does not stop batch processing; `sendMorningReminders()` and `sendEveningReminders()` return a summary like `{ processed, sent, skipped, failed, errors }` without exposing tokens.
+- One failing tester or channel does not stop the other channel or remaining testers. `sendMorningReminders()` and `sendEveningReminders()` expose independent `email` and `whatsapp` sent, skipped, and failed counts plus a combined redacted error list.
 
 ### Triggers
 
@@ -313,6 +339,56 @@ runEmailAutomationSmokeTest();
 The smoke test verifies: test mode is configured, default tasks can be seeded idempotently, a uniquely named `[Smoke Test] Email Automation Tester` is created and activated for today, morning and evening emails are generated and sent to the test recipient, duplicate reminder protection blocks a second send for the same period/day, completed tasks are skipped, reminder counts and timestamps update correctly, and no real tester receives a smoke-test email (all sends are redirected while test mode is on).
 
 Smoke-test rows persist for manual review; only remove rows clearly marked `[Smoke Test]` if they are no longer needed.
+
+## WhatsApp Reminder Automation
+
+Iteration 8D adds WhatsApp as an optional channel alongside email. Email remains the primary channel. Morning and evening runs assign the activity once, then evaluate and attempt email and WhatsApp independently. An email failure does not block WhatsApp, a WhatsApp failure does not block email, and either failure does not stop later testers. Menu results and function return values summarize each channel separately with `sent`, `skipped`, and `failed` counts; readable failures are redacted so secrets, tester tokens, phone numbers, and personalized links are not exposed.
+
+### External Architecture And Authorization
+
+The spreadsheet and Apps Script project remain container-bound. Apps Script builds the reminder from spreadsheet data and sends an outbound HTTPS request through `UrlFetchApp` to the separately hosted Evolution API. Evolution API handles the WhatsApp connection; it receives no spreadsheet credentials and has no direct access to the spreadsheet. Feedback links continue to come from the existing feedback Web App rather than a second URL system.
+
+Outbound Evolution requests require the Apps Script OAuth scope `https://www.googleapis.com/auth/script.external_request`. After a deployment that adds this scope, the script owner must run an Evolution operation in Apps Script and complete Google's authorization prompt before menu actions or triggers can call the external service.
+
+Evolution configuration is stored only in Apps Script Script Properties. The required property names are:
+
+```text
+EVOLUTION_API_URL
+EVOLUTION_API_KEY
+EVOLUTION_INSTANCE
+WHATSAPP_TEST_MODE
+WHATSAPP_TEST_RECIPIENT
+```
+
+Do not put property values in source control, spreadsheet cells, logs, Dashboard, Monitoring, or this README. Treat the API key as a secret. Public Evolution configuration, getter, and direct-send functions require the active Google user to be an owner or editor of the bound spreadsheet; scheduled reminders use private internal helpers so the public feedback Web App cannot retrieve the key, reconfigure Evolution, or send arbitrary WhatsApp text. The external service can be unavailable, disconnected, or return an error even when all properties are present, so configuration status alone does not prove delivery.
+
+### Configuration Menu And Smoke Test
+
+Use **Tester Automation > WhatsApp** for normal administration:
+
+- **Configure Evolution API** prompts for the external API URL, instance name, and API key, then stores them in Script Properties without displaying the saved key.
+- **Configure Test Recipient** stores a normalized test destination.
+- **Enable WhatsApp Test Mode** and **Disable WhatsApp Test Mode** control routing.
+- **Check WhatsApp Configuration** reports whether the URL, key, instance, and test recipient are configured and whether Test Mode is on; it does not reveal stored values.
+- **Send WhatsApp Test Message** runs `runWhatsAppSmokeTest()` and displays success or failure in the spreadsheet.
+
+The smoke test requires complete Evolution configuration, WhatsApp Test Mode enabled, and a valid test recipient. It sends one harmless message only to that test recipient and requires a successful Evolution response. Use the configuration check first, then confirm actual receipt in WhatsApp; a success toast without receipt still requires investigation of the external instance and destination.
+
+### WhatsApp Test Mode
+
+When `WHATSAPP_TEST_MODE` is true, every WhatsApp send is hard-redirected to `WHATSAPP_TEST_RECIPIENT`. The real tester phone is never used. If the test recipient is missing or invalid, delivery fails safely and does not fall back to the tester's number. This routing is independent of Email Test Mode, so operators must review both modes before any manual batch run or live transition.
+
+### Tracking And Duplicate Blocking
+
+`Last WhatsApp Reminder At` and `WhatsApp Reminder Count` are independent from the existing email fields. They update only after Evolution confirms a successful send. A timeout, unreachable host, non-success response, invalid response, invalid or disconnected instance, or other send failure leaves both WhatsApp fields unchanged.
+
+Duplicate protection uses the WhatsApp fields, not `Reminder Count`. Once the automated WhatsApp reminder succeeds for that task activity, a repeated run skips that channel while email retains its own eligibility and history. Conversely, a prior email does not by itself block the first eligible WhatsApp send.
+
+### Live Operation
+
+The scheduled morning and evening handlers continue to process `Active`, `Needs Reminder`, and `At Risk` testers during Day 1 through Day 14. WhatsApp is attempted only for an otherwise eligible activity whose tester has a valid `Phone` and `WhatsApp Enabled = TRUE`. `Not Started`, `Completed`, and `Inactive` testers are not sent normal reminders.
+
+Keep WhatsApp Test Mode enabled during configuration and smoke testing. Before live operation, verify the external instance is connected, run the smoke test, inspect channel-specific summaries and Activity Log tracking, resolve readiness failures, review every opted-in phone, and only then disable WhatsApp Test Mode. In live mode, messages use each eligible tester's stored phone; there is no redirect or fallback destination. Evolution failures remain isolated to WhatsApp and are surfaced in that channel's failure count.
 
 ## Tester Feedback Web App
 
@@ -592,6 +668,8 @@ runSystemReadinessCheck();
 
 The check is read-only. It verifies all required sheets and headers, complete and unique active Day 1–14 AM/PM task coverage, required Web App configuration, and exactly one time-driven trigger for each managed automation handler. Its structured result separates `failures` from non-blocking `warnings`; `ok` is false only when failures exist. Email Test Mode being enabled is a warning because it deliberately prevents live tester delivery.
 
+WhatsApp readiness is conditional. If no tester has `WhatsApp Enabled = TRUE`, missing Evolution configuration is a warning rather than a system failure. Once any tester opts in, the Evolution URL, API key, and instance are required and missing configuration is a failure. Whenever WhatsApp Test Mode is on, a valid test recipient is required; the readiness result must be resolved before relying on redirected sends. Readiness reports only configured state, never property values.
+
 Configuration and trigger diagnostics are also available independently:
 
 ```javascript
@@ -613,9 +691,9 @@ Repair is serialized with a script lock. It creates missing time-driven triggers
 
 ### Concurrency And Delivery Safety
 
-Tester creation and updates, task assignment, feedback submission, activity completion, reminder metadata changes, and smoke-data cleanup use document locks around uniqueness-sensitive writes. Trigger installation and removal use a script lock. Reminder delivery uses a script lock around the complete refresh, duplicate check, email send, and metadata-recording sequence.
+Tester creation and updates, task assignment, feedback submission, activity completion, reminder metadata changes, and smoke-data cleanup use document locks around uniqueness-sensitive writes. Trigger installation and removal use a script lock. Reminder delivery uses a script lock around the complete refresh, channel-specific duplicate checks, sends, and metadata-recording sequence.
 
-Reminder timestamps and counts update only after `MailApp.sendEmail` succeeds. In Test Mode, a missing or invalid test recipient fails safely; delivery never falls back to the tester's email.
+Email timestamps and counts update only after `MailApp.sendEmail` succeeds; WhatsApp timestamps and counts update only after Evolution reports success. A failed channel does not update its tracking or prevent the other channel from being attempted. In either channel's Test Mode, a missing or invalid test recipient fails safely and delivery never falls back to the tester's real destination.
 
 ### Deterministic Logic Tests
 
@@ -660,20 +738,42 @@ The menu requires confirmation. Cleanup first validates the Testers, Activity Lo
 
 ### Controlled Live Transition
 
-1. Keep Email Test Mode enabled while configuring the test recipient and Feedback Web App URL.
-2. Run deterministic logic tests and the full system dry run. Confirm the redirected email and manually open a fresh feedback link when browser-level deployment verification is needed.
+1. Keep Email and WhatsApp Test Modes enabled while configuring both test recipients, the Evolution API, and the Feedback Web App URL.
+2. Run deterministic logic tests, the full system dry run, and the WhatsApp smoke test. Confirm both redirected messages and manually open a fresh feedback link when browser-level deployment verification is needed.
 3. Run smoke-data cleanup, then refresh Monitoring and Dashboard.
-4. Review every real tester's email, Start Date, and Status. Only `Active`, `Needs Reminder`, and `At Risk` testers are eligible for reminders.
+4. Review every real tester's email, Start Date, Status, Phone, and WhatsApp Enabled value. Only `Active`, `Needs Reminder`, and `At Risk` testers are eligible for reminders, and only opted-in testers with valid phones are eligible for WhatsApp.
 5. Inspect or repair the three managed automation triggers and run the readiness check. Resolve every failure; review warnings deliberately.
-6. Disable Test Mode only when live delivery is intended:
+6. Disable each channel's Test Mode only when live delivery through that channel is intended:
 
 ```javascript
 setEmailTestMode(false);
+setWhatsAppTestMode(false);
 getSystemConfigurationHealth();
 runSystemReadinessCheck();
 ```
 
-7. Confirm configuration health reports `readyForLiveSending: true`. Re-enable Test Mode immediately if any live-run verification is incomplete.
+7. Confirm configuration health and readiness are suitable for live sending. Re-enable the relevant Test Mode immediately if any live-run verification is incomplete.
+
+### Iteration 8D Manual Runtime Verification
+
+Perform this verification in the bound Apps Script project and spreadsheet. Use isolated smoke-test data and operator-controlled test recipients; do not use a live tester as a test destination.
+
+1. Push the intended revision, open the bound Apps Script project, confirm the `script.external_request` OAuth scope is present, run an Evolution operation, and complete the Google authorization prompt.
+2. Reload the spreadsheet and run **Tester Automation > Initialize Spreadsheet** twice. Confirm the second run is harmless and that `Testers` contains `Phone` and `WhatsApp Enabled` while `Activity Log` contains `Last WhatsApp Reminder At` and `WhatsApp Reminder Count` exactly once. Then run **Help > Refresh Guide** once so the existing generated Guide sheet shows the 8D operating instructions.
+3. In **Tester Automation > WhatsApp**, run **Configure Evolution API** and **Configure Test Recipient**, enable WhatsApp Test Mode, then run **Check WhatsApp Configuration**. Confirm the URL, key, instance, and test recipient report configured and Test Mode reports on without displaying any saved value.
+4. Run **Send WhatsApp Test Message**. Confirm a success result in the spreadsheet and confirm the test message is actually received by the configured test destination.
+5. Prepare one isolated, reminder-eligible tester and activity with WhatsApp enabled. Run the applicable morning or evening reminder manually while both channel Test Modes are on. Confirm the visible result has separate email and WhatsApp sent, skipped, and failed totals, both test destinations receive their message, and no live tester receives one.
+6. Inspect that activity's row. Confirm `Last Reminder At` and `Reminder Count` reflect email success and `Last WhatsApp Reminder At` and `WhatsApp Reminder Count` separately reflect Evolution success.
+7. Run the same reminder again on the same calendar day. Confirm duplicate delivery is skipped independently and the successful channel counts and timestamps do not increase.
+8. For a fresh isolated activity, temporarily remove `WHATSAPP_TEST_RECIPIENT` while keeping WhatsApp Test Mode on. Run the reminder and confirm WhatsApp fails safely, no tester phone is used, WhatsApp tracking remains unchanged, the email channel is still attempted, and later testers continue processing. Restore the test recipient through the menu.
+9. For another fresh isolated activity, temporarily configure a non-working Evolution instance while keeping Test Mode on. Confirm the WhatsApp failure is readable but redacted, email can still succeed, and WhatsApp tracking remains unchanged. Restore the known configuration and repeat the smoke test successfully.
+10. Temporarily remove the three Evolution connection properties in Apps Script Project Settings and disable WhatsApp for all testers. Run readiness and confirm the missing optional configuration is a warning. Enable WhatsApp only for the isolated tester, run readiness again, and confirm the missing connection properties are failures. With Test Mode on, remove the test-recipient property and confirm that is also a failure, then restore all configuration through the menu.
+11. On `Testers`, select one cell on an imported `Not Started` smoke tester row and run **Tester Automation > Testers > Activate Selected Tester**. Enter a valid Day 1 date, verify the confirmation details, approve it, and confirm only that tester becomes Active with that Start Date. Repeat against the header, multiple rows, a non-`Testers` sheet, and an already Active row; each must be rejected without changing data or sending a reminder.
+12. Re-run **Check WhatsApp Configuration** and the readiness check, restore all test safeguards, and inspect the Apps Script execution log for redaction. Only after all checks pass should operators deliberately disable Test Mode for a controlled live run and confirm channel summaries and receipt with an opted-in tester.
+
+### Runtime Verification Limits
+
+Local syntax checks, JSON parsing, `git diff --check`, unit-style logic tests, and `clasp status` can validate repository structure and static behavior only. They do not prove Google authorization, the `UrlFetchApp` network path, Script Property values, spreadsheet menu prompts, installable-trigger execution, Evolution API reachability or instance connection, provider acceptance, WhatsApp receipt, or Apps Script behavior against live sheet data. Iteration 8D runtime success should be claimed only after the manual checks above pass in the deployed bound project and the external message is received.
 
 ## Local Development Workflow
 

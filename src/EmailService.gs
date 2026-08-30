@@ -119,63 +119,11 @@ function sendTaskReminderEmail(tester, task, activity) {
 }
 
 function sendMorningReminders() {
-  var summary = {
-    processed: 0,
-    sent: 0,
-    skipped: 0,
-    failed: 0,
-    errors: []
-  };
-
-  getReminderEligibleTesters().forEach(function (tester) {
-    summary.processed += 1;
-    try {
-      var result = sendMorningReminderForTester_(tester);
-      if (result.sent) {
-        summary.sent += 1;
-      } else {
-        summary.skipped += 1;
-      }
-    } catch (error) {
-      summary.failed += 1;
-      summary.errors.push({
-        testerId: tester.testerId,
-        message: error.message
-      });
-    }
-  });
-
-  return summary;
+  return sendReminderBatchForPeriod_(TASK_PERIODS.AM);
 }
 
 function sendEveningReminders() {
-  var summary = {
-    processed: 0,
-    sent: 0,
-    skipped: 0,
-    failed: 0,
-    errors: []
-  };
-
-  getReminderEligibleTesters().forEach(function (tester) {
-    summary.processed += 1;
-    try {
-      var result = sendEveningReminderForTester_(tester);
-      if (result.sent) {
-        summary.sent += 1;
-      } else {
-        summary.skipped += 1;
-      }
-    } catch (error) {
-      summary.failed += 1;
-      summary.errors.push({
-        testerId: tester.testerId,
-        message: error.message
-      });
-    }
-  });
-
-  return summary;
+  return sendReminderBatchForPeriod_(TASK_PERIODS.PM);
 }
 
 function runMorningReminderTest() {
@@ -337,6 +285,111 @@ function runEmailAutomationSmokeTest() {
 }
 
 // Internal helpers for per-tester reminder flows.
+
+function sendReminderBatchForPeriod_(period) {
+  var summary = {
+    processed: 0,
+    email: createReminderChannelSummary_(),
+    whatsapp: createReminderChannelSummary_(),
+    errors: []
+  };
+
+  getReminderEligibleTesters().forEach(function (tester) {
+    summary.processed += 1;
+    var prepared;
+    try {
+      prepared = prepareReminderForTester_(tester, period);
+    } catch (error) {
+      recordReminderChannelFailure_(summary, 'email', tester.testerId, error);
+      recordReminderChannelFailure_(summary, 'whatsapp', tester.testerId, error);
+      return;
+    }
+
+    if (!prepared.ready) {
+      summary.email.skipped += 1;
+      summary.whatsapp.skipped += 1;
+      return;
+    }
+
+    try {
+      var emailResult = period === TASK_PERIODS.AM
+        ? sendMorningReminderForTester_(tester)
+        : sendEveningReminderForTester_(tester);
+      recordReminderChannelResult_(summary.email, emailResult);
+    } catch (error) {
+      recordReminderChannelFailure_(summary, 'email', tester.testerId, error);
+    }
+
+    try {
+      var whatsappResult = sendWhatsAppTaskReminder_(
+        tester,
+        prepared.task,
+        prepared.activity
+      );
+      recordReminderChannelResult_(summary.whatsapp, whatsappResult);
+    } catch (error) {
+      recordReminderChannelFailure_(summary, 'whatsapp', tester.testerId, error);
+    }
+  });
+
+  return summary;
+}
+
+function prepareReminderForTester_(tester, period) {
+  return runWithReminderDeliveryLocks_(function () {
+    var currentTester = getTesterById(tester.testerId);
+    if (
+      !currentTester ||
+      REMINDER_ELIGIBLE_STATUSES.indexOf(currentTester.status) === -1
+    ) {
+      return { ready: false, reason: 'not_eligible' };
+    }
+    var currentDay = getTesterCurrentDay(currentTester);
+    if (currentDay < 1 || currentDay > TESTING_PLAN_DAYS) {
+      return { ready: false, reason: 'out_of_range', currentDay: currentDay };
+    }
+    var task = getTaskForDayAndPeriod(currentDay, period);
+    if (!task) {
+      return { ready: false, reason: 'no_task', currentDay: currentDay };
+    }
+    var activity = assignTaskToTesterWithResultWithoutLock_(
+      currentTester.testerId,
+      task.taskId
+    ).activity;
+    return {
+      ready: true,
+      tester: currentTester,
+      task: task,
+      activity: activity,
+      currentDay: currentDay
+    };
+  });
+}
+
+function createReminderChannelSummary_() {
+  return {
+    sent: 0,
+    skipped: 0,
+    failed: 0
+  };
+}
+
+function recordReminderChannelResult_(channelSummary, result) {
+  if (result && result.sent) {
+    channelSummary.sent += 1;
+  } else {
+    channelSummary.skipped += 1;
+  }
+}
+
+function recordReminderChannelFailure_(summary, channel, testerId, error) {
+  summary[channel].failed += 1;
+  summary.errors.push({
+    channel: channel,
+    testerId: testerId,
+    message: error && error.message ? error.message : 'Reminder delivery failed.'
+  });
+}
 
 function sendMorningReminderForTester_(tester) {
   return runWithReminderDeliveryLocks_(function () {
