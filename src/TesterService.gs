@@ -30,7 +30,9 @@ function addTester(name, email, startDate) {
       'Status': TESTER_STATUSES.NOT_STARTED,
       'Token': token,
       'Created At': now,
-      'Updated At': now
+      'Updated At': now,
+      'Phone': '',
+      'WhatsApp Enabled': false
     });
 
     context.sheet
@@ -72,6 +74,8 @@ function bulkImportTesters() {
     var tokenIndex = context.columnIndexes['Token'] - 1;
     var createdAtIndex = context.columnIndexes['Created At'] - 1;
     var updatedAtIndex = context.columnIndexes['Updated At'] - 1;
+    var phoneIndex = context.columnIndexes['Phone'] - 1;
+    var whatsappEnabledIndex = context.columnIndexes['WhatsApp Enabled'] - 1;
     var seenEmails = Object.create(null);
     var usedTesterIds = Object.create(null);
     var usedTokens = Object.create(null);
@@ -156,6 +160,10 @@ function bulkImportTesters() {
         );
         var now = new Date();
         var importedRow = row.slice();
+        importedRow[phoneIndex] = normalizeWhatsAppPhone(row[phoneIndex]);
+        importedRow[whatsappEnabledIndex] = normalizeWhatsAppEnabled_(
+          row[whatsappEnabledIndex]
+        );
         importedRow[testerIdIndex] = newTesterId;
         importedRow[statusIndex] = TESTER_STATUSES.NOT_STARTED;
         importedRow[tokenIndex] = newToken;
@@ -338,6 +346,14 @@ function updateTesterWithoutLock_(testerId, updates) {
     validatedUpdates.status = validateTesterStatus_(updates.status);
   }
 
+  if (Object.prototype.hasOwnProperty.call(updates, 'phone')) {
+    validatedUpdates.phone = normalizeWhatsAppPhone(updates.phone);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(updates, 'whatsappEnabled')) {
+    validatedUpdates.whatsappEnabled = normalizeWhatsAppEnabled_(updates.whatsappEnabled);
+  }
+
   if (Object.prototype.hasOwnProperty.call(validatedUpdates, 'name')) {
     match.sheet
       .getRange(match.rowNumber, match.columnIndexes['Name'])
@@ -360,6 +376,18 @@ function updateTesterWithoutLock_(testerId, updates) {
     match.sheet
       .getRange(match.rowNumber, match.columnIndexes['Status'])
       .setValue(validatedUpdates.status);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(validatedUpdates, 'phone')) {
+    match.sheet
+      .getRange(match.rowNumber, match.columnIndexes['Phone'])
+      .setValue(validatedUpdates.phone);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(validatedUpdates, 'whatsappEnabled')) {
+    match.sheet
+      .getRange(match.rowNumber, match.columnIndexes['WhatsApp Enabled'])
+      .setValue(validatedUpdates.whatsappEnabled);
   }
 
   match.sheet
@@ -456,25 +484,32 @@ function runTesterServiceSmokeTest() {
 }
 
 function getTesterSheetContext_() {
+  ensureTesterWhatsAppColumns_();
   var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TESTER_SHEET_NAME);
-  var headers = REQUIRED_SHEET_HEADERS[TESTER_SHEET_NAME];
+  var requiredHeaders = REQUIRED_SHEET_HEADERS[TESTER_SHEET_NAME];
 
   if (!sheet) {
     throw new Error('The Testers sheet is missing. Run initializeSpreadsheet() first.');
   }
 
-  var sheetHeaders = sheet.getRange(1, 1, 1, headers.length).getValues()[0];
-  headers.forEach(function (header, index) {
-    if (sheetHeaders[index] !== header) {
+  var lastCol = sheet.getLastColumn();
+  if (lastCol === 0) {
+    throw new Error('The Testers sheet headers are invalid. Run initializeSpreadsheet() first.');
+  }
+  var headers = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (header) {
+    return String(header).trim();
+  });
+  requiredHeaders.forEach(function (header) {
+    if (headers.filter(function (candidate) { return candidate === header; }).length !== 1) {
       throw new Error(
-        'The Testers sheet headers are invalid. Run initializeSpreadsheet() on an empty sheet or restore the required headers.'
+        'The Testers sheet headers are invalid. Run initializeSpreadsheet() or restore the required headers.'
       );
     }
   });
 
   var columnIndexes = {};
-  headers.forEach(function (header, index) {
-    columnIndexes[header] = index + 1;
+  requiredHeaders.forEach(function (header) {
+    columnIndexes[header] = headers.indexOf(header) + 1;
   });
 
   return {
@@ -516,9 +551,26 @@ function findTesterRow_(columnName, value, ignoreCase) {
   return null;
 }
 
+function countTesterRowsById_(testerId) {
+  var context = getTesterSheetContext_();
+  var lastRow = context.sheet.getLastRow();
+  if (lastRow <= 1) {
+    return 0;
+  }
+  var idColumn = context.columnIndexes['Tester ID'];
+  return context.sheet
+    .getRange(2, idColumn, lastRow - 1, 1)
+    .getValues()
+    .filter(function (row) {
+      return normalizeLookupValue_(row[0]) === testerId;
+    }).length;
+}
+
 function buildTesterRow_(headers, valuesByHeader) {
   return headers.map(function (header) {
-    return valuesByHeader[header];
+    return Object.prototype.hasOwnProperty.call(valuesByHeader, header)
+      ? valuesByHeader[header]
+      : '';
   });
 }
 
@@ -531,8 +583,30 @@ function testerObjectFromRow_(row, columnIndexes) {
     status: row[columnIndexes['Status'] - 1],
     token: row[columnIndexes['Token'] - 1],
     createdAt: row[columnIndexes['Created At'] - 1],
-    updatedAt: row[columnIndexes['Updated At'] - 1]
+    updatedAt: row[columnIndexes['Updated At'] - 1],
+    phone: normalizeLookupValue_(row[columnIndexes['Phone'] - 1]),
+    whatsappEnabled: normalizeWhatsAppEnabledForRead_(
+      row[columnIndexes['WhatsApp Enabled'] - 1]
+    )
   };
+}
+
+function ensureTesterWhatsAppColumns_() {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(TESTER_SHEET_NAME);
+  if (!sheet || sheet.getLastColumn() === 0) {
+    return;
+  }
+  var required = REQUIRED_SHEET_HEADERS[TESTER_SHEET_NAME];
+  var lastCol = sheet.getLastColumn();
+  var currentHeaders = sheet.getRange(1, 1, 1, lastCol).getValues()[0].map(function (value) {
+    return String(value).trim();
+  });
+  var missing = required.filter(function (header) {
+    return currentHeaders.indexOf(header) === -1;
+  });
+  if (missing.length > 0) {
+    sheet.getRange(1, lastCol + 1, 1, missing.length).setValues([missing]);
+  }
 }
 
 function generateUniqueTesterValue_(generator, lookup) {
@@ -619,6 +693,57 @@ function normalizeBulkActivationStartDate_(startDate) {
     throw new Error('Start Date must be a valid calendar date in YYYY-MM-DD format.');
   }
   return parsed;
+}
+
+function normalizeWhatsAppPhone(phone) {
+  if (phone === null || typeof phone === 'undefined') {
+    return '';
+  }
+  var input = String(phone).trim();
+  if (!input) {
+    return '';
+  }
+  var normalized = input.replace(/[+\s()\-]/g, '');
+  if (!/^\d+$/.test(normalized)) {
+    throw new Error('Phone must contain only an international country code and digits.');
+  }
+  if (!/^[1-9]\d{6,14}$/.test(normalized)) {
+    throw new Error(
+      'Phone must be an international number with 7 to 15 digits and cannot start with 0.'
+    );
+  }
+  return normalized;
+}
+
+function normalizeWhatsAppEnabled_(value) {
+  if (value === true || value === 1) {
+    return true;
+  }
+  if (
+    value === false ||
+    value === 0 ||
+    value === null ||
+    typeof value === 'undefined' ||
+    String(value).trim() === ''
+  ) {
+    return false;
+  }
+  var normalized = String(value).trim().toLowerCase();
+  if (['true', 'yes', 'y', '1', 'on'].indexOf(normalized) !== -1) {
+    return true;
+  }
+  if (['false', 'no', 'n', '0', 'off'].indexOf(normalized) !== -1) {
+    return false;
+  }
+  throw new Error('WhatsApp Enabled must be TRUE or FALSE.');
+}
+
+function normalizeWhatsAppEnabledForRead_(value) {
+  try {
+    return normalizeWhatsAppEnabled_(value);
+  } catch (error) {
+    return false;
+  }
 }
 
 function validateTesterStatus_(status) {

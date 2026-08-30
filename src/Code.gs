@@ -9,6 +9,7 @@ function onOpen() {
       ui
         .createMenu('Testers')
         .addItem('Import New Testers', 'menuImportNewTesters')
+        .addItem('Activate Selected Tester', 'menuActivateSelectedTester')
         .addItem('Activate Not Started Testers', 'menuActivateNotStartedTesters')
     )
     .addItem('Run Tester Smoke Test', 'menuRunTesterSmokeTest')
@@ -26,6 +27,17 @@ function onOpen() {
         .addItem('Install Reminder Triggers', 'menuInstallReminderTriggers')
         .addItem('Remove Reminder Triggers', 'menuRemoveReminderTriggers')
         .addItem('Run Email Automation Smoke Test', 'menuRunEmailAutomationSmokeTest')
+    )
+    .addSubMenu(
+      ui
+        .createMenu('WhatsApp')
+        .addItem('Configure Evolution API', 'menuConfigureEvolutionApi')
+        .addItem('Configure Test Recipient', 'menuConfigureWhatsAppTestRecipient')
+        .addSeparator()
+        .addItem('Enable WhatsApp Test Mode', 'menuEnableWhatsAppTestMode')
+        .addItem('Disable WhatsApp Test Mode', 'menuDisableWhatsAppTestMode')
+        .addItem('Check WhatsApp Configuration', 'menuCheckWhatsAppConfiguration')
+        .addItem('Send WhatsApp Test Message', 'runWhatsAppSmokeTest')
     )
     .addSubMenu(
       ui
@@ -183,6 +195,101 @@ function menuActivateNotStartedTesters() {
   });
 }
 
+function menuActivateSelectedTester() {
+  runMenuAction_(function () {
+    activateSelectedTester();
+  });
+}
+
+function activateSelectedTester() {
+  var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  var sheet = spreadsheet.getActiveSheet();
+  if (!sheet || sheet.getName() !== TESTER_SHEET_NAME) {
+    throw new Error('Select exactly one tester row on the Testers sheet.');
+  }
+  var rangeList = SpreadsheetApp.getActiveRangeList();
+  var ranges = rangeList ? rangeList.getRanges() : [];
+  if (ranges.length === 0) {
+    throw new Error('Select cells from exactly one tester row.');
+  }
+  var selectedRows = {};
+  ranges.forEach(function (selectedRange) {
+    if (selectedRange.getNumRows() !== 1) {
+      throw new Error('Select cells from exactly one tester row.');
+    }
+    selectedRows[selectedRange.getRow()] = true;
+  });
+  var rowNumbers = Object.keys(selectedRows);
+  if (rowNumbers.length !== 1) {
+    throw new Error('Select cells from exactly one tester row.');
+  }
+  var rowNumber = Number(rowNumbers[0]);
+  if (rowNumber === 1) {
+    throw new Error('The Testers header row cannot be activated.');
+  }
+  if (rowNumber > sheet.getLastRow()) {
+    throw new Error('The selected row does not contain an imported tester.');
+  }
+
+  var context = getTesterSheetContext_();
+  var testerId = normalizeLookupValue_(
+    sheet.getRange(rowNumber, context.columnIndexes['Tester ID']).getValue()
+  );
+  if (!testerId) {
+    throw new Error('The selected tester must be imported before activation.');
+  }
+  var tester = getTesterById(testerId);
+  if (!tester) {
+    throw new Error('The selected Tester ID does not exist.');
+  }
+  if (countTesterRowsById_(testerId) !== 1) {
+    throw new Error('The selected Tester ID is duplicated. No tester was activated.');
+  }
+  if (tester.status !== TESTER_STATUSES.NOT_STARTED) {
+    throw new Error('Only a tester with Status = Not Started can be activated.');
+  }
+
+  var ui = SpreadsheetApp.getUi();
+  var response = ui.prompt(
+    'Activate Selected Tester',
+    'Enter the Start Date in YYYY-MM-DD format:',
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (response.getSelectedButton() !== ui.Button.OK) {
+    showMenuToast_('Selected tester activation cancelled.', 'Tester Automation');
+    return { activated: false, cancelled: true };
+  }
+  var startDateText = response.getResponseText().trim();
+  var startDate = normalizeBulkActivationStartDate_(startDateText);
+  var confirmation = ui.alert(
+    'Activate tester?',
+    'Name: ' + tester.name +
+      '\nEmail: ' + tester.email +
+      '\nStart Date: ' + startDateText +
+      '\n\nThis begins Day 1 for this tester.',
+    ui.ButtonSet.YES_NO
+  );
+  if (confirmation !== ui.Button.YES) {
+    showMenuToast_('Selected tester activation cancelled.', 'Tester Automation');
+    return { activated: false, cancelled: true };
+  }
+
+  var currentTester = getTesterById(testerId);
+  if (!currentTester || currentTester.status !== TESTER_STATUSES.NOT_STARTED) {
+    throw new Error('The selected tester is no longer Not Started. No change was made.');
+  }
+  var activated = activateTester(testerId, startDate);
+  showMenuToast_(
+    activated.name + ' activated \u2705\nDay 1 starts: ' + startDateText,
+    'Tester Automation'
+  );
+  return {
+    activated: true,
+    testerId: activated.testerId,
+    startDate: startDate
+  };
+}
+
 function menuSeedDefaultTasks() {
   runMenuAction_(function () {
     var result = seedDefaultTasks();
@@ -238,6 +345,123 @@ function menuRunEmailAutomationSmokeTest() {
       'Email automation smoke test passed\nMorning sent: ' + result.morningSent +
         '\nEvening sent: ' + result.eveningSent,
       'Tester Automation'
+    );
+  });
+}
+
+function menuConfigureEvolutionApi() {
+  runMenuAction_(function () {
+    var ui = SpreadsheetApp.getUi();
+    var urlResponse = ui.prompt(
+      'Configure Evolution API',
+      'Enter the Evolution API URL:',
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (urlResponse.getSelectedButton() !== ui.Button.OK) {
+      showMenuToast_('Evolution API configuration was not changed.', 'Tester Automation');
+      return;
+    }
+    var instanceResponse = ui.prompt(
+      'Configure Evolution API',
+      'Enter the WhatsApp instance name:',
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (instanceResponse.getSelectedButton() !== ui.Button.OK) {
+      showMenuToast_('Evolution API configuration was not changed.', 'Tester Automation');
+      return;
+    }
+    var keyResponse = ui.prompt(
+      'Configure Evolution API',
+      'Enter the Evolution API key. It will be stored only in Script Properties:',
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (keyResponse.getSelectedButton() !== ui.Button.OK) {
+      showMenuToast_('Evolution API configuration was not changed.', 'Tester Automation');
+      return;
+    }
+
+    var url = urlResponse.getResponseText().trim();
+    var instance = instanceResponse.getResponseText().trim();
+    var apiKey = keyResponse.getResponseText().trim();
+    if (!/^https:\/\/[^\s]+$/i.test(url.replace(/\/+$/, ''))) {
+      throw new Error('Evolution API URL must be a valid HTTPS URL.');
+    }
+    if (!/^[^\s/]+$/.test(instance)) {
+      throw new Error('Evolution instance name cannot contain spaces or slashes.');
+    }
+    if (!apiKey) {
+      throw new Error('Evolution API key is required.');
+    }
+    setEvolutionApiUrl(url);
+    setEvolutionInstance(instance);
+    setEvolutionApiKey(apiKey);
+    showMenuToast_(
+      'Evolution API configuration saved.\nAPI key remains hidden.',
+      'Tester Automation'
+    );
+  });
+}
+
+function menuConfigureWhatsAppTestRecipient() {
+  runMenuAction_(function () {
+    var ui = SpreadsheetApp.getUi();
+    var response = ui.prompt(
+      'Configure WhatsApp Test Recipient',
+      'Enter one international phone number, including country code:',
+      ui.ButtonSet.OK_CANCEL
+    );
+    if (response.getSelectedButton() !== ui.Button.OK) {
+      showMenuToast_('WhatsApp test recipient was not changed.', 'Tester Automation');
+      return;
+    }
+    setWhatsAppTestRecipient(response.getResponseText());
+    showMenuToast_('WhatsApp test recipient saved.', 'Tester Automation');
+  });
+}
+
+function menuEnableWhatsAppTestMode() {
+  runMenuAction_(function () {
+    if (!getWhatsAppTestRecipient()) {
+      throw new Error('Configure a WhatsApp test recipient before enabling Test Mode.');
+    }
+    setWhatsAppTestMode(true);
+    showMenuToast_(
+      'WhatsApp Test Mode enabled.\nAll WhatsApp sends are redirected.',
+      'Tester Automation'
+    );
+  });
+}
+
+function menuDisableWhatsAppTestMode() {
+  runMenuAction_(function () {
+    var ui = SpreadsheetApp.getUi();
+    var confirmation = ui.alert(
+      'Disable WhatsApp Test Mode?',
+      'WhatsApp reminders will use eligible testers\' configured phone numbers.',
+      ui.ButtonSet.YES_NO
+    );
+    if (confirmation !== ui.Button.YES) {
+      showMenuToast_('WhatsApp Test Mode remains enabled.', 'Tester Automation');
+      return;
+    }
+    setWhatsAppTestMode(false);
+    showMenuToast_('WhatsApp Test Mode disabled.', 'Tester Automation');
+  });
+}
+
+function menuCheckWhatsAppConfiguration() {
+  runMenuAction_(function () {
+    var status = getWhatsAppConfigurationStatus();
+    var yes = ' \u2705';
+    var no = ' \u274C';
+    showMenuAlert_(
+      'WhatsApp Configuration',
+      'API URL configured' + (status.apiUrlConfigured ? yes : no) +
+        '\nAPI key configured' + (status.apiKeyConfigured ? yes : no) +
+        '\nInstance configured' + (status.instanceConfigured ? yes : no) +
+        '\nTest Mode ' + (status.testMode ? 'ON' : 'OFF') +
+        '\nTest recipient configured' +
+          (status.testRecipientConfigured && status.testRecipientValid ? yes : no)
     );
   });
 }
@@ -472,6 +696,7 @@ function menuRunDeterministicLogicTests() {
       'Deterministic logic tests passed\nDate: ' + result.dateScenarios +
         '\nStatus: ' + result.statusScenarios +
         '\nFeedback: ' + result.feedbackScenarios +
+        '\nWhatsApp: ' + result.whatsAppScenarios +
         '\nDashboard: ' + result.dashboardScenarios,
       'Tester Automation'
     );
@@ -551,13 +776,21 @@ function runMenuAction_(action) {
 function showReminderSummary_(heading, result) {
   var message =
     heading +
-    '\nProcessed: ' + result.processed +
-    '\nSent: ' + result.sent +
-    '\nSkipped: ' + result.skipped +
-    '\nFailed: ' + result.failed;
-  if (result.failed > 0) {
+    (result.email.failed === 0 && result.whatsapp.failed === 0 ? ' \u2705' : '') +
+    '\n\nTesters processed: ' + result.processed +
+    '\n\nEmail:' +
+    '\nSent: ' + result.email.sent +
+    '\nSkipped: ' + result.email.skipped +
+    '\nFailed: ' + result.email.failed +
+    '\n\nWhatsApp:' +
+    '\nSent: ' + result.whatsapp.sent +
+    '\nSkipped: ' + result.whatsapp.skipped +
+    '\nFailed: ' + result.whatsapp.failed;
+  if (result.email.failed > 0 || result.whatsapp.failed > 0) {
     if (result.errors.length > 0) {
-      message += '\nFirst error: ' + result.errors[0].message;
+      message +=
+        '\n\nFirst error (' + result.errors[0].channel + '): ' +
+        result.errors[0].message;
     }
     showMenuAlert_('Tester Automation', message);
     return;
@@ -661,6 +894,9 @@ function initializeSpreadsheetWithoutLock_() {
 
   if (typeof ensureActivityLogReminderColumns_ === 'function') {
     ensureActivityLogReminderColumns_();
+  }
+  if (typeof ensureTesterWhatsAppColumns_ === 'function') {
+    ensureTesterWhatsAppColumns_();
   }
   var guideSheet = spreadsheet.getSheetByName(GUIDE_SHEET_NAME);
   if (
